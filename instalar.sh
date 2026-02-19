@@ -41,6 +41,8 @@ declare -A DEP_UPDATE_TARGET=()
 
 BASH_NON_INTERACTIVE=0
 BASH_APPLY_DEP_UPDATES=0
+BASH_HAS_TTY=0
+BASH_TTY_FD=""
 
 paint() {
   printf '%b%s%b' "$1" "$2" "${NC}"
@@ -110,22 +112,62 @@ Flow:
 EOF
 }
 
+detect_bash_tty() {
+  if { exec {BASH_TTY_FD}<>/dev/tty; } 2>/dev/null; then
+    BASH_HAS_TTY=1
+  else
+    BASH_HAS_TTY=0
+    BASH_TTY_FD=""
+  fi
+}
+
+require_bash_tty_for_interactive() {
+  if (( BASH_NON_INTERACTIVE == 1 )); then
+    return 0
+  fi
+
+  if (( BASH_HAS_TTY == 1 )); then
+    return 0
+  fi
+
+  fail "No interactive terminal detected."
+  fail "Use --non-interactive for unattended runs."
+  fail "Example: curl -fsSL <url>/instalar.sh | bash -s -- --non-interactive"
+  exit 1
+}
+
 ask_yes_no() {
   local prompt="$1"
   local default_yes="$2"
   local hint="y/N"
   local default="n"
+  local prompt_fd="2"
+  local read_fd=""
 
   if [[ "${default_yes}" == "1" ]]; then
     hint="Y/n"
     default="y"
   fi
 
+  if (( BASH_HAS_TTY == 1 )); then
+    prompt_fd="${BASH_TTY_FD}"
+    read_fd="${BASH_TTY_FD}"
+  fi
+
   while true; do
     local answer=""
-    printf '%b %s %b[%s]%b: ' "$(paint "${CYAN}" "?")" "${prompt}" "${DIM}" "${hint}" "${NC}" >&2
-    if ! IFS= read -r answer; then
-      answer=""
+    printf '%b %s %b[%s]%b: ' "$(paint "${CYAN}" "?")" "${prompt}" "${DIM}" "${hint}" "${NC}" >&${prompt_fd}
+
+    if [[ -n "${read_fd}" ]]; then
+      if ! IFS= read -r -u "${read_fd}" answer; then
+        fail "Interactive input failed. Use --non-interactive for unattended runs."
+        return 2
+      fi
+    else
+      if ! IFS= read -r answer; then
+        fail "Interactive input failed. Use --non-interactive for unattended runs."
+        return 2
+      fi
     fi
 
     answer="${answer,,}"
@@ -819,6 +861,8 @@ main_bash() {
   done
 
   parse_bash_args "$@"
+  detect_bash_tty
+  require_bash_tty_for_interactive
 
   banner
   check_and_prepare_dependencies
@@ -2844,6 +2888,12 @@ async function main() {
 
   state.runtime = resolveRuntime(cliOptions, loadedConfig, resolvedConfigPath);
 
+  if (!state.runtime.nonInteractive && !process.stdin.isTTY) {
+    throw new Error(
+      "No interactive terminal detected. Use --non-interactive for unattended runs.",
+    );
+  }
+
   const cwd = process.cwd();
   const hasLaravelProject = isLaravelProject(cwd);
   let mode = state.runtime.mode;
@@ -2923,7 +2973,12 @@ main().catch((error) => {
 });
 NODE
 
-if node "${NODE_TMP}" "$@"; then
+NODE_STDIN="/dev/stdin"
+if (( BASH_HAS_TTY == 1 )); then
+  NODE_STDIN="/dev/tty"
+fi
+
+if node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
   exit 0
 else
   exit $?
