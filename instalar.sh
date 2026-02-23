@@ -1392,20 +1392,66 @@ function splitPackageInput(raw) {
     .filter(Boolean);
 }
 
-function normalizeLaravelFlags(flags, fallback = ["--npm", "--livewire", "--boost"]) {
-  const valid = new Set(["--npm", "--livewire", "--boost"]);
-  if (!Array.isArray(flags) || flags.length === 0) {
-    return [...fallback];
+function normalizeLaravelTestSuiteFlag(value) {
+  if (typeof value !== "string") {
+    return null;
   }
 
-  const normalized = [];
-  for (const flag of flags) {
-    if (valid.has(flag) && !normalized.includes(flag)) {
-      normalized.push(flag);
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "--pest" || normalized === "pest") {
+    return "--pest";
+  }
+
+  if (normalized === "--phpunit" || normalized === "phpunit") {
+    return "--phpunit";
+  }
+
+  return null;
+}
+
+function normalizeLaravelFlags(
+  flags,
+  fallback = ["--npm", "--livewire", "--boost", "--pest"],
+  preferredTestSuite = null,
+) {
+  const validStartupFlags = new Set(["--npm", "--livewire", "--boost"]);
+  const startupFlags = [];
+  let testSuiteFlag = normalizeLaravelTestSuiteFlag(preferredTestSuite);
+
+  if (Array.isArray(flags) && flags.length > 0) {
+    for (const flag of flags) {
+      if (validStartupFlags.has(flag) && !startupFlags.includes(flag)) {
+        startupFlags.push(flag);
+      }
+
+      if (!testSuiteFlag) {
+        const candidate = normalizeLaravelTestSuiteFlag(flag);
+        if (candidate) {
+          testSuiteFlag = candidate;
+        }
+      }
     }
   }
 
-  return normalized.length > 0 ? normalized : [...fallback];
+  if (startupFlags.length === 0 && Array.isArray(fallback)) {
+    for (const flag of fallback) {
+      if (validStartupFlags.has(flag) && !startupFlags.includes(flag)) {
+        startupFlags.push(flag);
+      }
+    }
+  }
+
+  if (!testSuiteFlag && Array.isArray(fallback)) {
+    for (const flag of fallback) {
+      const candidate = normalizeLaravelTestSuiteFlag(flag);
+      if (candidate) {
+        testSuiteFlag = candidate;
+        break;
+      }
+    }
+  }
+
+  return [...startupFlags, testSuiteFlag || "--pest"];
 }
 
 function getOptionIndexesByIds(ids, fallback = []) {
@@ -1711,7 +1757,8 @@ async function collectAutoConfig(preset = {}) {
 
   const laravelNewFlags = normalizeLaravelFlags(
     preset.laravelNewFlags || preset.laravelFlags,
-    ["--npm", "--livewire", "--boost"],
+    ["--npm", "--livewire", "--boost", "--pest"],
+    preset.testSuite,
   );
 
   const createAdmin = preset.createAdmin !== undefined ? Boolean(preset.createAdmin) : true;
@@ -1792,21 +1839,31 @@ async function collectManualConfig(preset = {}) {
   }
 
   const laravelFlagOptions = ["--npm", "--livewire", "--boost"];
-  const defaultLaravelFlags = normalizeLaravelFlags(
+  const resolvedLaravelFlags = normalizeLaravelFlags(
     preset.laravelNewFlags || preset.laravelFlags,
-    ["--npm", "--livewire", "--boost"],
+    ["--npm", "--livewire", "--boost", "--pest"],
+    preset.testSuite,
   );
   const defaultLaravelFlagIndexes = laravelFlagOptions
-    .map((flag, index) => (defaultLaravelFlags.includes(flag) ? index : -1))
+    .map((flag, index) => (resolvedLaravelFlags.includes(flag) ? index : -1))
     .filter((index) => index >= 0);
   const selectedLaravelFlagIndexes = await askMultiChoiceWithAll(
     "Choose Laravel startup flags",
     laravelFlagOptions,
     defaultLaravelFlagIndexes,
   );
-  const laravelNewFlags = selectedLaravelFlagIndexes.map(
+  const selectedStartupFlags = selectedLaravelFlagIndexes.map(
     (index) => laravelFlagOptions[index],
   );
+
+  const defaultTestSuiteIndex = resolvedLaravelFlags.includes("--phpunit") ? 1 : 0;
+  const testSuiteChoice = await askChoice(
+    "Choose Laravel test suite",
+    ["Pest", "PHPUnit"],
+    defaultTestSuiteIndex,
+  );
+  const testSuiteFlag = testSuiteChoice === 1 ? "--phpunit" : "--pest";
+  const laravelNewFlags = [...selectedStartupFlags, testSuiteFlag];
 
   const optionalLabels = OPTIONAL_PACKAGE_CHOICES.map((choice) => choice.title);
   const defaultOptionalIndexes = getOptionIndexesByIds(preset.optionalPackageIds, [0, 1]);
