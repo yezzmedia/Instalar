@@ -118,7 +118,7 @@ Help:
 
 - Asks only for project name.
 - Uses SQLite by default.
-- Uses Laravel startup flags: `--npm --livewire --boost`.
+- Uses Laravel startup flags: `--npm --livewire --boost --pest`.
 - Creates default admin by default:
   - Email: `admin@example.com`
   - Password: `password` (or generated with `--admin-generate`)
@@ -129,6 +129,7 @@ Help:
   - project directory
   - database
   - Laravel startup flags
+  - Laravel test suite (`Pest` or `PHPUnit`)
   - optional packages + custom Composer packages
   - admin creation
   - optional `git init`
@@ -209,7 +210,7 @@ Example `instalar.json`:
   "database": {
     "connection": "sqlite"
   },
-  "laravelFlags": ["--npm", "--livewire", "--boost"],
+  "laravelFlags": ["--npm", "--livewire", "--boost", "--pest"],
   "optionalPackageIds": ["fortify", "ai", "modules_bundle"],
   "customNormalPackages": [],
   "customDevPackages": [],
@@ -225,6 +226,7 @@ Example `instalar.json`:
 Notes:
 
 - If `--config` is omitted, `./instalar.json` is loaded automatically when present.
+- Test suite can be set via `laravelFlags` (`--pest` / `--phpunit`) or optional `"testSuite": "pest|phpunit"`.
 - In non-interactive mode with an existing target directory:
   - without `--allow-delete-existing` => abort
   - with `--allow-delete-existing` => replace (with `--backup`, backup first)
