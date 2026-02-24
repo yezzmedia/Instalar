@@ -3086,6 +3086,71 @@ function checkAccess(targetPath, mode) {
 async function runHealthChecks(projectPath) {
   section("Health Check");
 
+  let healthCheckFailed = false;
+  const failedChecks = [];
+
+  // Check APP_KEY is set
+  const envPath = path.join(projectPath, ".env");
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, "utf8");
+    const appKeyMatch = envContent.match(/^APP_KEY=base64:[A-Za-z0-9+\/=]+$/m);
+    if (appKeyMatch) {
+      ok("APP_KEY is set");
+    } else {
+      warn("APP_KEY is missing - run 'php artisan key:generate'");
+      healthCheckFailed = true;
+      failedChecks.push("APP_KEY");
+    }
+  } else {
+    warn(".env file not found");
+    healthCheckFailed = true;
+    failedChecks.push(".env");
+  }
+
+  // Check database connection
+  const dbCheck = await runCommand("php", ["artisan", "db:show", "--no-interaction"], {
+    cwd: projectPath,
+    required: false,
+    warnOnFailure: false,
+  });
+  if (dbCheck.exitCode !== 0) {
+    warn("Database connection check failed");
+    healthCheckFailed = true;
+    failedChecks.push("Database");
+  }
+
+  // Check storage link
+  const storageLinkPath = path.join(projectPath, "public", "storage");
+  let storageLinkOk = false;
+  try {
+    const lstat = fs.lstatSync(storageLinkPath);
+    storageLinkOk = lstat.isSymbolicLink();
+  } catch {
+    storageLinkOk = false;
+  }
+  if (storageLinkOk) {
+    ok("Storage link exists");
+  } else {
+    warn("Storage link missing - run 'php artisan storage:link'");
+    healthCheckFailed = true;
+    failedChecks.push("Storage link");
+  }
+
+  // Run composer validate
+  const composerValidate = await runCommand("composer", ["validate", "--no-interaction"], {
+    cwd: projectPath,
+    required: false,
+    warnOnFailure: false,
+  });
+  if (composerValidate.exitCode === 0) {
+    ok("Composer.json is valid");
+  } else {
+    warn("Composer.json validation failed");
+    healthCheckFailed = true;
+    failedChecks.push("Composer");
+  }
+
+  // Existing checks: about, migrate:status, route:list, Vite manifest
   await runCommand("php", ["artisan", "about", "--no-interaction"], {
     cwd: projectPath,
     required: false,
@@ -3109,6 +3174,23 @@ async function runHealthChecks(projectPath) {
     ok("Vite manifest found (public/build/manifest.json)");
   } else {
     warn("Vite manifest missing: public/build/manifest.json");
+    healthCheckFailed = true;
+    failedChecks.push("Vite manifest");
+  }
+
+  // Ask user if they want to continue when health checks failed
+  if (healthCheckFailed) {
+    console.log("");
+    const failedList = failedChecks.join(", ");
+    fail(`Health check failed for: ${failedList}`);
+    console.log("");
+
+    const shouldContinue = await askYesNo("Do you want to continue anyway?", false);
+    if (!shouldContinue) {
+      fail("Installation aborted by user due to failed health checks.");
+      process.exit(1);
+    }
+    info("Continuing despite health check failures...");
   }
 }
 
