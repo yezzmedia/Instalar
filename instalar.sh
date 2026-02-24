@@ -3141,7 +3141,7 @@ async function runHealthChecks(projectPath) {
   section("Health Check");
 
   let healthCheckFailed = false;
-  const failedChecks = [];
+  let failedChecks = [];
 
   // Check APP_KEY is set
   const envPath = path.join(projectPath, ".env");
@@ -3185,9 +3185,33 @@ async function runHealthChecks(projectPath) {
   if (storageLinkOk) {
     ok("Storage link exists");
   } else {
-    warn("Storage link missing - run 'php artisan storage:link'");
-    healthCheckFailed = true;
-    failedChecks.push("Storage link");
+    warn("Storage link missing");
+
+    // In non-interactive mode, try to create the link automatically
+    // In interactive mode, ask the user
+    let createLink = state.runtime.nonInteractive;
+    if (!state.runtime.nonInteractive) {
+      createLink = await askYesNo("Create storage link now?", true);
+    }
+
+    if (createLink) {
+      const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+        cwd: projectPath,
+        required: false,
+        warnOnFailure: false,
+      });
+      if (linkResult.success) {
+        ok("Storage link created successfully");
+        storageLinkOk = true;
+        // Remove from failed checks since we fixed it
+        failedChecks = failedChecks.filter((c) => c !== "Storage link");
+      } else {
+        warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
+      }
+    } else {
+      healthCheckFailed = true;
+      failedChecks.push("Storage link");
+    }
   }
 
   // Run composer validate
