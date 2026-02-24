@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - 6 new optional packages: Laravel Excel, IDE Helper, Migration Generator, Spatie Model Types, Breadcrumbs, Flare
 - Enhanced health checks: APP_KEY, database connection, storage link, composer validation
+- Auto-create storage link when missing (with retry option in interactive mode)
 - User prompt on health check failure (ask to continue or abort)
 - `--verbose` flag for detailed output
 - `--debug` flag for debug mode (shows all commands, uses `set -x`)
@@ -15,6 +16,11 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - `runCommand()` now returns exit code for better error handling
+
+### Fixed
+
+- Correct package name: `spatie/model-states` -> `spatie/laravel-model-states`
+- Replace deprecated `facade/ignition` with `spatie/laravel-ignition` for Laravel 12 compatibility
 
 ## [0.1.4] - 2026-02-24 (Rosie)
 
