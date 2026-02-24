@@ -1,21 +1,60 @@
 #!/usr/bin/env bash
+#
+# INSTALAR - Laravel + Filament Installer
+# ========================================
+#
+# A single-file installer script that:
+#   1. Checks/installs system dependencies (php, composer, laravel, node, npm)
+#   2. Creates new Laravel 12 projects or updates existing ones
+#   3. Installs Filament, Fortify, Boost, and optional packages
+#   4. Runs build/optimize steps and health checks
+#
+# Usage:
+#   ./instalar.sh                          # Interactive mode
+#   ./instalar.sh --help                  # Show help
+#   ./instalar.sh --non-interactive       # Non-interactive with defaults
+#   ./instalar.sh --config instalar.json  # With JSON config
+#   ./instalar.sh --mode auto|manual|update
+#
+# Examples:
+#   # Standard interactive run
+#   ./instalar.sh
+#
+#   # Non-interactive with config file
+#   ./instalar.sh --non-interactive --config ./instalar.json
+#
+#   # Auto mode with admin password generation
+#   ./instalar.sh --non-interactive --mode auto --admin-generate
+#
+#   # Update existing Laravel project
+#   ./instalar.sh --mode update
+#
+# Environment:
+#   BASH_NON_INTERACTIVE=1   - Skip all prompts
+#   BASH_APPLY_DEP_UPDATES=1 - Apply dependency updates automatically
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.0"
+SCRIPT_VERSION="0.1.3"
+
+# =============================================================================
+# Terminal Color Codes
+# =============================================================================
+# These ANSI escape codes are used to colorize output in the terminal.
+# If stdout is not a TTY (e.g., piped output), empty strings are used instead.
 
 if [[ -t 1 ]]; then
-  NC=$'\033[0m'
-  BOLD=$'\033[1m'
-  DIM=$'\033[2m'
-  RED=$'\033[31m'
-  GREEN=$'\033[32m'
-  YELLOW=$'\033[33m'
-  BLUE=$'\033[34m'
-  MAGENTA=$'\033[35m'
-  CYAN=$'\033[36m'
-  WHITE=$'\033[37m'
+  NC=$'\033[0m'       # Reset/Normal
+  BOLD=$'\033[1m'     # Bold
+  DIM=$'\033[2m'      # Dim
+  RED=$'\033[31m'     # Red (errors)
+  GREEN=$'\033[32m'   # Green (success)
+  YELLOW=$'\033[33m'  # Yellow (warnings)
+  BLUE=$'\033[34m'    # Blue
+  MAGENTA=$'\033[35m' # Magenta
+  CYAN=$'\033[36m'    # Cyan (info)
+  WHITE=$'\033[37m'   # White
 else
   NC=""
   BOLD=""
@@ -29,41 +68,70 @@ else
   WHITE=""
 fi
 
-PKG_MANAGER=""
-PKG_INDEX_REFRESHED=0
+# =============================================================================
+# Global Variables
+# =============================================================================
 
-declare -a DEPS=(php composer laravel node npm)
-declare -A DEP_AVAILABLE=()
-declare -A DEP_VERSION=()
-declare -a DEPS_WITH_UPDATES=()
-declare -A DEP_UPDATE_CURRENT=()
-declare -A DEP_UPDATE_TARGET=()
+PKG_MANAGER=""                    # Detected package manager (apt, dnf, yum, pacman, apk, brew)
+PKG_INDEX_REFRESHED=0             # Flag to prevent multiple package index refreshes
 
-BASH_NON_INTERACTIVE=0
-BASH_APPLY_DEP_UPDATES=0
-BASH_HAS_TTY=0
-BASH_TTY_FD=""
+# Dependency tracking arrays and associative maps
+declare -a DEPS=(php composer laravel node npm)                 # Required dependencies
+declare -A DEP_AVAILABLE=()                                    # Maps dep name -> 1 if available
+declare -A DEP_VERSION=()                                      # Maps dep name -> version string
+declare -a DEPS_WITH_UPDATES=()                                # List of deps with available updates
+declare -A DEP_UPDATE_CURRENT=()                               # Maps dep name -> current version
+declare -A DEP_UPDATE_TARGET=()                                # Maps dep name -> target version
 
+# Flags for script behavior
+BASH_NON_INTERACTIVE=0      # Set to 1 to skip all prompts (--non-interactive)
+BASH_APPLY_DEP_UPDATES=0   # Set to 1 to auto-apply dependency updates (--deps-update)
+BASH_HAS_TTY=0             # Set to 1 if /dev/tty is available for interactive input
+BASH_TTY_FD=""             # File descriptor number for /dev/tty (used for interactive prompts)
+
+# =============================================================================
+# Terminal UI Functions
+# =============================================================================
+
+# Applies ANSI color codes to text
+# Args:
+#   $1 - ANSI color code (e.g., "${RED}")
+#   $2 - Text to colorize
 paint() {
   printf '%b%s%b' "$1" "$2" "${NC}"
 }
 
+# Prints an informational message to stderr
+# Args:
+#   $1 - Message text
 info() {
   printf '  %b %s\n' "$(paint "${CYAN}" "[INFO]")" "$1"
 }
 
+# Prints a success message to stderr
+# Args:
+#   $1 - Message text
 ok() {
   printf '  %b %s\n' "$(paint "${GREEN}" "[ OK ]")" "$1"
 }
 
+# Prints a warning message to stderr
+# Args:
+#   $1 - Message text
 warn() {
   printf '  %b %s\n' "$(paint "${YELLOW}" "[WARN]")" "$1"
 }
 
+# Prints an error message to stderr
+# Args:
+#   $1 - Message text
 fail() {
   printf '  %b %s\n' "$(paint "${RED}" "[ERR ]")" "$1"
 }
 
+# Prints a section header with horizontal lines
+# Args:
+#   $1 - Section title
 section() {
   local line
   line="$(printf '%*s' 72 '' | tr ' ' '-')"
@@ -72,6 +140,7 @@ section() {
   printf '%b\n' "$(paint "${DIM}" "${line}")"
 }
 
+# Prints the INSTALAR ASCII art banner
 banner() {
   clear 2>/dev/null || true
   printf '%b\n' "$(paint "${MAGENTA}" "#######################################################")"
@@ -87,6 +156,11 @@ banner() {
   printf '%b\n' "$(paint "${DIM}" "       Dependency Check + Installation")"
 }
 
+# =============================================================================
+# Help & Usage
+# =============================================================================
+
+# Prints the command-line help text
 print_usage() {
   cat <<EOF
 INSTALAR v${SCRIPT_VERSION}
@@ -112,6 +186,15 @@ Flow:
 EOF
 }
 
+# =============================================================================
+# TTY Detection & Interactive Mode Handling
+# =============================================================================
+
+# Detects whether /dev/tty is available for interactive input
+# This is used to determine if prompts can be shown to the user
+# Sets global variables:
+#   BASH_HAS_TTY - 1 if TTY is available, 0 otherwise
+#   BASH_TTY_FD - File descriptor number for /dev/tty if available
 detect_bash_tty() {
   if { exec {BASH_TTY_FD}<>/dev/tty; } 2>/dev/null; then
     BASH_HAS_TTY=1
@@ -121,6 +204,9 @@ detect_bash_tty() {
   fi
 }
 
+# Requires a TTY for interactive mode, aborts if not available
+# This prevents prompts from being silently skipped when running via curl|bash
+# Returns 0 if interactive mode is allowed, exits with error otherwise
 require_bash_tty_for_interactive() {
   if (( BASH_NON_INTERACTIVE == 1 )); then
     return 0
@@ -136,6 +222,18 @@ require_bash_tty_for_interactive() {
   exit 1
 }
 
+# =============================================================================
+# Interactive Prompt Functions
+# =============================================================================
+
+# Prompts the user with a yes/no question
+# Args:
+#   $1 - Prompt text (question to ask)
+#   $2 - Default choice (1 for yes, 0 for no)
+# Returns:
+#   0 - User answered yes
+#   1 - User answered no
+#   2 - Input failed (non-interactive without TTY)
 ask_yes_no() {
   local prompt="$1"
   local default_yes="$2"
@@ -189,6 +287,14 @@ ask_yes_no() {
   done
 }
 
+# =============================================================================
+# System & Package Management
+# =============================================================================
+
+# Executes a command with sudo, handling different privilege scenarios
+# Args:
+#   $@ - Command and arguments to execute
+# Returns: Command exit code, or 1 if sudo is not available
 run_sudo() {
   if (( EUID == 0 )); then
     "$@"
@@ -202,6 +308,8 @@ run_sudo() {
   return 1
 }
 
+# Ensures composer global bin directory is in PATH
+# Checks common locations: ~/.config/composer/vendor/bin and ~/.composer/vendor/bin
 ensure_composer_global_bin() {
   local candidates=(
     "${HOME}/.config/composer/vendor/bin"
@@ -215,6 +323,8 @@ ensure_composer_global_bin() {
   done
 }
 
+# Detects the available system package manager
+# Sets global variable PKG_MANAGER to one of: apt, dnf, yum, pacman, apk, brew
 detect_package_manager() {
   if command -v apt-get >/dev/null 2>&1; then PKG_MANAGER="apt"; return; fi
   if command -v dnf >/dev/null 2>&1; then PKG_MANAGER="dnf"; return; fi
@@ -226,6 +336,8 @@ detect_package_manager() {
   PKG_MANAGER=""
 }
 
+# Refreshes the package manager's package index
+# Only refreshes once per execution (uses PKG_INDEX_REFRESHED flag)
 refresh_package_index() {
   if (( PKG_INDEX_REFRESHED == 1 )); then
     return 0
@@ -262,6 +374,14 @@ refresh_package_index() {
   return 0
 }
 
+# =============================================================================
+# Dependency Detection & Version Management
+# =============================================================================
+
+# Checks if a required dependency is available in PATH
+# Args:
+#   $1 - Dependency name (php, composer, node, npm, laravel)
+# Returns: 0 if exists, 1 otherwise
 dep_exists() {
   local dep="$1"
   case "${dep}" in
@@ -274,6 +394,10 @@ dep_exists() {
   esac
 }
 
+# Gets the version string of a dependency
+# Args:
+#   $1 - Dependency name
+# Returns: Version string on stdout
 dep_version() {
   local dep="$1"
   local raw=""
@@ -303,6 +427,8 @@ dep_version() {
   printf '%s' "${raw}"
 }
 
+# Refreshes the state of all dependencies
+# Updates global arrays: DEP_AVAILABLE and DEP_VERSION
 refresh_dep_state() {
   ensure_composer_global_bin
 
@@ -318,6 +444,7 @@ refresh_dep_state() {
   done
 }
 
+# Prints a formatted table of dependencies with their versions
 print_dep_table() {
   local width=0
   local dep
@@ -341,6 +468,10 @@ print_dep_table() {
   done
 }
 
+# Normalizes a version string by removing prefix 'v' and taking first token
+# Args:
+#   $1 - Version string (e.g., "v8.5.0" or "8.5.0 (cli)")
+# Returns: Normalized version on stdout (e.g., "8.5.0")
 normalize_version() {
   local value="$1"
   value="${value#v}"
@@ -348,6 +479,16 @@ normalize_version() {
   printf '%s' "${value}"
 }
 
+# =============================================================================
+# Update Detection Functions
+# =============================================================================
+
+# Registers an available update for a dependency
+# Args:
+#   $1 - Dependency name
+#   $2 - Current version
+#   $3 - Target (new) version
+# Side effects: Updates global arrays DEPS_WITH_UPDATES, DEP_UPDATE_CURRENT, DEP_UPDATE_TARGET
 register_dep_update() {
   local dep="$1"
   local current="$2"
@@ -378,6 +519,8 @@ register_dep_update() {
   DEP_UPDATE_TARGET["${dep}"]="${target}"
 }
 
+# Resets all tracked dependency updates
+# Clears global arrays DEPS_WITH_UPDATES, DEP_UPDATE_CURRENT, DEP_UPDATE_TARGET
 reset_dep_updates() {
   DEPS_WITH_UPDATES=()
   unset DEP_UPDATE_CURRENT
@@ -386,6 +529,11 @@ reset_dep_updates() {
   declare -gA DEP_UPDATE_TARGET=()
 }
 
+# Detects available updates for a package using the system package manager
+# Args:
+#   $1 - Dependency name (e.g., "php", "node")
+#   $2 - Package name (e.g., "php", "nodejs")
+# Calls: register_dep_update if an update is available
 detect_pm_update() {
   local dep="$1"
   local pkg="$2"
@@ -481,6 +629,9 @@ detect_pm_update() {
   register_dep_update "${dep}" "${current}" "${target}"
 }
 
+# Detects available updates for Composer itself
+# Queries packagist API for the latest stable version
+# Calls: register_dep_update if an update is available
 detect_composer_update() {
   local current
   local latest
@@ -504,6 +655,9 @@ detect_composer_update() {
   fi
 }
 
+# Detects available updates for the Laravel installer
+# Uses composer global outdated to check for updates
+# Calls: register_dep_update if an update is available
 detect_laravel_installer_update() {
   local pair
   pair="$(composer global outdated laravel/installer --direct --format=json 2>/dev/null | php -r '
@@ -529,6 +683,9 @@ detect_laravel_installer_update() {
   fi
 }
 
+# Detects available updates for npm itself
+# Queries npm registry for the latest version
+# Calls: register_dep_update if an update is available
 detect_npm_update() {
   local current
   local latest
@@ -541,6 +698,9 @@ detect_npm_update() {
   fi
 }
 
+# Detects available updates for all required dependencies
+# Refreshes package index if needed, then checks each dependency
+# Calls: detect_pm_update, detect_composer_update, detect_laravel_installer_update, detect_npm_update
 detect_available_updates() {
   reset_dep_updates
 
@@ -563,6 +723,7 @@ detect_available_updates() {
   detect_npm_update
 }
 
+# Prints a formatted table of available dependency updates
 print_available_updates() {
   local dep_width=0
   local current_width=7
@@ -595,6 +756,13 @@ print_available_updates() {
   done
 }
 
+# =============================================================================
+# Installation & Update Functions
+# =============================================================================
+
+# Applies all detected dependency updates
+# Iterates through DEPS_WITH_UPDATES and calls update_dep for each
+# Skips duplicate updates (e.g., node and npm both handled by node_npm)
 apply_available_updates() {
   local -A applied_actions=()
   local dep
@@ -619,6 +787,8 @@ apply_available_updates() {
   done
 }
 
+# Installs PHP and required PHP extensions
+# Uses the detected package manager to install php, php-cli, and extensions
 install_php() {
   refresh_package_index
   case "${PKG_MANAGER}" in
@@ -633,6 +803,8 @@ install_php() {
   esac
 }
 
+# Fallback method to install Composer when no package manager is available
+# Downloads and runs the official Composer installer
 install_composer_fallback() {
   mkdir -p "${HOME}/.local/bin"
   local tmp
@@ -646,6 +818,8 @@ install_composer_fallback() {
   export PATH="${HOME}/.local/bin:${PATH}"
 }
 
+# Installs Composer using the system package manager
+# Falls back to install_composer_fallback if package not available
 install_composer() {
   refresh_package_index
   case "${PKG_MANAGER}" in
@@ -660,6 +834,7 @@ install_composer() {
   esac
 }
 
+# Installs Node.js and npm using the system package manager
 install_node_npm() {
   refresh_package_index
   case "${PKG_MANAGER}" in
@@ -674,12 +849,17 @@ install_node_npm() {
   esac
 }
 
+# Installs the Laravel installer via Composer global require
 install_laravel_installer() {
   ensure_composer_global_bin
   composer global require laravel/installer --no-interaction
   ensure_composer_global_bin
 }
 
+# Installs a dependency by name
+# Dispatches to the appropriate install function based on dependency name
+# Args:
+#   $1 - Dependency name (php, composer, laravel, node, npm)
 install_dep() {
   local dep="$1"
   case "${dep}" in
@@ -691,6 +871,7 @@ install_dep() {
   esac
 }
 
+# Updates PHP to the latest version available in the package manager
 update_php() {
   if ! refresh_package_index; then
     warn "Could not refresh package index for php update."
@@ -707,6 +888,8 @@ update_php() {
   esac
 }
 
+# Updates Composer to the latest version
+# Tries self-update first, then package manager update
 update_composer() {
   if command -v composer >/dev/null 2>&1; then
     composer self-update || true
@@ -727,6 +910,8 @@ update_composer() {
   esac
 }
 
+# Updates Node.js and npm to the latest versions
+# Also runs npm install -g npm@latest to ensure npm is up to date
 update_node_npm() {
   if ! refresh_package_index; then
     warn "Could not refresh package index for node/npm update."
@@ -747,12 +932,17 @@ update_node_npm() {
   fi
 }
 
+# Updates the Laravel installer via Composer global update
 update_laravel_installer() {
   ensure_composer_global_bin
   composer global update laravel/installer --no-interaction || true
   ensure_composer_global_bin
 }
 
+# Updates a dependency by name
+# Dispatches to the appropriate update function based on dependency name
+# Args:
+#   $1 - Dependency name (php, composer, laravel, node, npm)
 update_dep() {
   local dep="$1"
   case "${dep}" in
@@ -764,6 +954,14 @@ update_dep() {
   esac
 }
 
+# =============================================================================
+# Main Workflow Functions
+# =============================================================================
+
+# Main function that orchestrates the dependency check and preparation
+# 1. Detects package manager
+# 2. Checks for missing dependencies and prompts for installation
+# 3. Detects and optionally applies available updates
 check_and_prepare_dependencies() {
   section "Dependency Check (Bash)"
 
@@ -851,6 +1049,12 @@ parse_bash_args() {
   done
 }
 
+# =============================================================================
+# Entry Point
+# =============================================================================
+
+# Main entry point for the Bash phase
+# Parses CLI arguments, detects TTY, and runs dependency preparation
 main_bash() {
   local arg
   for arg in "$@"; do
@@ -868,14 +1072,28 @@ main_bash() {
   check_and_prepare_dependencies
 }
 
+# Execute the main Bash function with all CLI arguments
 main_bash "$@"
 
+# =============================================================================
+# Node.js Installer Phase
+# =============================================================================
+# The following is an embedded Node.js script that handles:
+#   - Configuration loading (CLI args + JSON config)
+#   - Interactive prompts for manual mode
+#   - Laravel project creation/update
+#   - Package installation and setup
+#   - Final health checks and server startup
+# =============================================================================
+
+# Create temporary file for embedded Node.js code
 NODE_TMP="$(mktemp "${TMPDIR:-/tmp}/instalar-node-XXXXXX.cjs")"
 cleanup_node_tmp() {
   rm -f "${NODE_TMP}"
 }
 trap cleanup_node_tmp EXIT
 
+# Write the embedded Node.js script to temp file and execute it
 cat > "${NODE_TMP}" <<'NODE'
 "use strict";
 
