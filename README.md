@@ -7,7 +7,7 @@ Reference installer for Laravel 12 + Filament 5.
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.4** (Rosie)
+Current version: **0.1.5** (Rosie)
 
 ---
 
@@ -59,6 +59,12 @@ Help:
 
 # 6) Apply dependency updates during Bash dependency stage
 ./instalar.sh --deps-update
+
+# 7) Verbose output for debugging
+./instalar.sh --verbose
+
+# 8) Debug mode (shows all commands)
+./instalar.sh --debug
 ```
 
 ---
@@ -109,6 +115,8 @@ Help:
 | `--allow-delete-existing` | Allow replacing existing target directory in non-interactive mode |
 | `--start-server` | Run `composer run dev` automatically at the end |
 | `--deps-update` | Apply detected dependency updates in Bash phase |
+| `--verbose` | Enable verbose output |
+| `--debug` | Enable debug mode (shows all commands) |
 
 ---
 
@@ -237,6 +245,10 @@ Notes:
 
 INSTALAR runs:
 
+- Check for `APP_KEY` in `.env`
+- `php artisan db:show` (database connection)
+- Check for `public/storage` symlink
+- `composer validate`
 - `php artisan about`
 - `php artisan migrate:status`
 - `php artisan route:list`
@@ -246,6 +258,8 @@ INSTALAR runs:
   - `storage`
   - `bootstrap/cache`
   - `.env`
+
+If any health check fails, you'll be prompted to continue or abort.
 
 Optional afterward:
 

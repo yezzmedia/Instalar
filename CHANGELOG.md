@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-02-24 (Rosie)
+
+### Added
+
+- 6 new optional packages: Laravel Excel, IDE Helper, Migration Generator, Spatie Model Types, Breadcrumbs, Flare
+- Enhanced health checks: APP_KEY, database connection, storage link, composer validation
+- User prompt on health check failure (ask to continue or abort)
+- `--verbose` flag for detailed output
+- `--debug` flag for debug mode (shows all commands, uses `set -x`)
+
+### Changed
+
+- `runCommand()` now returns exit code for better error handling
+
 ## [0.1.4] - 2026-02-24 (Rosie)
 
 ### Added
