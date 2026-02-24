@@ -282,6 +282,28 @@ Optional afterward:
 
 ---
 
+## Future Improvements
+
+These features are planned or under consideration:
+
+### Short-term
+- Additional health checks (Redis connection, mail configuration)
+- Enhanced backup/restore functionality
+- Custom post-install commands
+- Improved verbose output for failed commands
+
+### Mid-term
+- Automated tests for the installer itself
+- GitHub Actions CI/CD workflow
+- Extended database support (PostgreSQL, SQL Server)
+- Plugin system for custom packages
+
+### Long-term
+- Optional web-based installation UI
+- Remote installation support (`curl ... | bash` from remote URL)
+
+---
+
 ## Project Files
 
 - `instalar.sh` — main installer (single required file)
