@@ -1,6 +1,7 @@
 .agents
 .ai
 .idea
+.gitignore
 /project-one
 /instalar-website
 /laravel-filament-app
