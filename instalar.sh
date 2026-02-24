@@ -1170,7 +1170,7 @@ const OPTIONAL_PACKAGE_CHOICES = [
   { id: "migration_generator", title: "Migration Generator", dev: ["kitloong/laravel-migrations-generator"] },
   { id: "model_types", title: "Spatie Model Types", normal: ["spatie/laravel-model-states"] },
   { id: "laravel_breadcrumbs", title: "Breadcrumbs", normal: ["davejamesmiller/laravel-breadcrumbs"] },
-  { id: "flare", title: "Flare Error Tracking", dev: ["facade/ignition"] },
+  { id: "flare", title: "Flare Error Tracking", normal: ["spatie/laravel-ignition"] },
 ];
 
 // Shared runtime state for warnings, generated admin credentials, and resolved options.
