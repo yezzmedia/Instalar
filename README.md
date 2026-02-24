@@ -1,6 +1,14 @@
 # INSTALAR
 
+[![Version](https://img.shields.io/github/v/release/yezzmedia/Instalar?include_prereleases&style=flat&color=blue)](https://github.com/yezzmedia/Instalar/releases)
+[![License](https://img.shields.io/github/license/yezzmedia/Instalar?style=flat&color=green)](LICENSE)
+[![PHP Version](https://img.shields.io/badge/PHP-8.5-blue?style=flat)](https://www.php.net/)
+[![Laravel](https://img.shields.io/badge/Laravel-12-blue?style=flat)](https://laravel.com/)
+[![Filament](https://img.shields.io/badge/Filament-5-blueviolet?style=flat)](https://filamentphp.com/)
+
 Reference installer for Laravel 12 + Filament 5.
+
+Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 
 `instalar.sh` is intentionally built as a **single file**:
 
