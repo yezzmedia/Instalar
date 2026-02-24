@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-02-24 (Rosie)
+
+### Added
+
+- Comprehensive inline comments in embedded Node.js phase using //
+- Full PHPDoc-style documentation for all major functions
+
+## [0.1.3] - 2026-02-23 (Rosie)
+
+### Added
+
+- Comprehensive inline comments in Bash phase using #
+- Full documentation for all major functions and sections
+
+## [0.1.2] - 2026-02-21 (Rosie)
+
+### Fixed
+
+- Hardened interactive TTY handling for piped execution
+- Use /dev/tty for prompts, abort interactive mode without terminal
+- Pass TTY stdin into embedded Node phase
+
+## [0.1.1] - 2026-02-20 (Rosie)
+
+### Added
+
+- Pest as default test suite for auto installations
+- Selectable test suite (Pest vs PHPUnit) in manual mode
+- "testSuite" option in JSON config support
+
 ## [0.1.0] - 2026-02-19
 
 ### Added

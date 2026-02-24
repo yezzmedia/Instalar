@@ -7,7 +7,7 @@ Reference installer for Laravel 12 + Filament 5.
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.0**
+Current version: **0.1.4** (Rosie)
 
 ---
 
