@@ -3185,32 +3185,47 @@ async function runHealthChecks(projectPath) {
   if (storageLinkOk) {
     ok("Storage link exists");
   } else {
-    warn("Storage link missing");
+    warn("Storage link missing - attempting to create");
 
-    // In non-interactive mode, try to create the link automatically
-    // In interactive mode, ask the user
-    let createLink = state.runtime.nonInteractive;
-    if (!state.runtime.nonInteractive) {
-      createLink = await askYesNo("Create storage link now?", true);
-    }
+    // Try to create the storage link automatically
+    const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+      cwd: projectPath,
+      required: false,
+      warnOnFailure: false,
+    });
 
-    if (createLink) {
-      const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
-        cwd: projectPath,
-        required: false,
-        warnOnFailure: false,
-      });
-      if (linkResult.success) {
-        ok("Storage link created successfully");
-        storageLinkOk = true;
-        // Remove from failed checks since we fixed it
-        failedChecks = failedChecks.filter((c) => c !== "Storage link");
-      } else {
-        warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
-      }
+    if (linkResult.success) {
+      ok("Storage link created successfully");
+      storageLinkOk = true;
+      // Remove from failed checks since we fixed it
+      failedChecks = failedChecks.filter((c) => c !== "Storage link");
     } else {
-      healthCheckFailed = true;
-      failedChecks.push("Storage link");
+      warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
+      // Only add to failed checks in non-interactive mode if link creation failed
+      if (!state.runtime.nonInteractive) {
+        const retry = await askYesNo("Try again?", false);
+        if (retry) {
+          const retryResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+            cwd: projectPath,
+            required: false,
+            warnOnFailure: false,
+          });
+          if (retryResult.success) {
+            ok("Storage link created successfully");
+            storageLinkOk = true;
+            failedChecks = failedChecks.filter((c) => c !== "Storage link");
+          } else {
+            healthCheckFailed = true;
+            failedChecks.push("Storage link");
+          }
+        } else {
+          healthCheckFailed = true;
+          failedChecks.push("Storage link");
+        }
+      } else {
+        healthCheckFailed = true;
+        failedChecks.push("Storage link");
+      }
     }
   }
 
