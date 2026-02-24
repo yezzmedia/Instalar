@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.3"
+SCRIPT_VERSION="0.1.4"
 
 # =============================================================================
 # Terminal Color Codes
@@ -1104,6 +1104,10 @@ const { spawn } = require("node:child_process");
 const readline = require("node:readline/promises");
 const readlineCore = require("node:readline");
 
+// =============================================================================
+// Console Styling
+// =============================================================================
+// ANSI color helpers for consistent terminal output in the Node.js phase.
 const C = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
@@ -1117,6 +1121,10 @@ const C = {
   white: "\x1b[37m",
 };
 
+// =============================================================================
+// Optional Package Catalog
+// =============================================================================
+// Defines selectable Composer packages for manual mode.
 const OPTIONAL_PACKAGE_CHOICES = [
   { id: "fortify", title: "Fortify Auth Backend", normal: ["laravel/fortify"] },
   { id: "ai", title: "Laravel AI SDK", normal: ["laravel/ai"] },
@@ -1143,6 +1151,7 @@ const OPTIONAL_PACKAGE_CHOICES = [
   { id: "debugbar", title: "Debugbar (dev)", dev: ["barryvdh/laravel-debugbar"] },
 ];
 
+// Shared runtime state for warnings, generated admin credentials, and resolved options.
 const state = {
   warnings: [],
   createdAdmin: null,
@@ -1158,27 +1167,33 @@ const state = {
   },
 };
 
+// Wraps text with an ANSI color and reset code.
 function color(text, code) {
   return `${code}${text}${C.reset}`;
 }
 
+// Prints an informational message.
 function info(message) {
   console.log(`  ${color("[INFO]", C.cyan)} ${message}`);
 }
 
+// Prints a success message.
 function ok(message) {
   console.log(`  ${color("[ OK ]", C.green)} ${message}`);
 }
 
+// Prints a warning message and stores it for the final summary.
 function warn(message) {
   state.warnings.push(message);
   console.log(`  ${color("[WARN]", C.yellow)} ${message}`);
 }
 
+// Prints an error message.
 function fail(message) {
   console.log(`  ${color("[ERR ]", C.red)} ${message}`);
 }
 
+// Prints a visual section heading.
 function section(title) {
   const line = "-".repeat(72);
   console.log(`\n${color(line, C.dim)}`);
@@ -1186,6 +1201,7 @@ function section(title) {
   console.log(color(line, C.dim));
 }
 
+// Parses Node-phase CLI arguments and normalizes known flags.
 function parseCliArgs(args) {
   const options = {
     help: false,
@@ -1271,6 +1287,7 @@ function parseCliArgs(args) {
   return options;
 }
 
+// Loads installer JSON config from disk and validates top-level shape.
 function loadInstallerConfig(configPath) {
   const resolvedPath = path.resolve(process.cwd(), configPath);
   if (!fs.existsSync(resolvedPath)) {
@@ -1289,6 +1306,7 @@ function loadInstallerConfig(configPath) {
   }
 }
 
+// Resolves runtime settings by merging CLI options with JSON config values.
 function resolveRuntime(cliOptions, fileConfig, configPath) {
   const resolvedMode = (cliOptions.mode || fileConfig?.mode || "").toLowerCase() || null;
   return {
@@ -1305,6 +1323,7 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
   };
 }
 
+// Builds a mode-specific preset by merging root config with mode overrides.
 function getModePreset(mode) {
   const rootConfig = state.runtime.config || {};
   const modeConfig =
@@ -1315,6 +1334,7 @@ function getModePreset(mode) {
   return { ...rootConfig, ...modeConfig };
 }
 
+// Creates a random alphanumeric password used for generated admin credentials.
 function generateAdminPassword(length = 20) {
   return crypto
     .randomBytes(length)
@@ -1323,6 +1343,7 @@ function generateAdminPassword(length = 20) {
     .slice(0, length);
 }
 
+// Prompts for a text input with optional default and non-interactive fallback.
 async function ask(question, defaultValue = "") {
   if (state.runtime.nonInteractive) {
     const value = defaultValue ?? "";
@@ -1344,6 +1365,7 @@ async function ask(question, defaultValue = "") {
   }
 }
 
+// Prompts until a non-empty value is provided.
 async function askRequired(question, defaultValue = "") {
   while (true) {
     const answer = await ask(question, defaultValue);
@@ -1359,6 +1381,7 @@ async function askRequired(question, defaultValue = "") {
   }
 }
 
+// Prompts for a yes/no answer with localized aliases.
 async function askYesNo(question, defaultYes = true) {
   if (state.runtime.nonInteractive) {
     info(`[non-interactive] ${question}: ${defaultYes ? "yes" : "no"}`);
@@ -1381,6 +1404,7 @@ async function askYesNo(question, defaultYes = true) {
   }
 }
 
+// Prompts for a single-choice selection and returns the chosen index.
 async function askChoice(question, options, defaultIndex = 0) {
   if (state.runtime.nonInteractive) {
     const fallbackIndex = Math.min(Math.max(defaultIndex, 0), Math.max(options.length - 1, 0));
@@ -1404,6 +1428,7 @@ async function askChoice(question, options, defaultIndex = 0) {
   }
 }
 
+// Prompts for multi-select values using interactive UI or text fallback.
 async function askMultiChoice(question, options, defaultIndexes = []) {
   if (state.runtime.nonInteractive) {
     const filtered = defaultIndexes
@@ -1461,6 +1486,7 @@ async function askMultiChoice(question, options, defaultIndexes = []) {
   }
 }
 
+// Adds a virtual "Select all" option on top of the multi-select prompt.
 async function askMultiChoiceWithAll(question, options, defaultIndexes = []) {
   const optionsWithAll = ["Select all", ...options];
   const defaultWithAll =
@@ -1480,6 +1506,7 @@ async function askMultiChoiceWithAll(question, options, defaultIndexes = []) {
     .sort((a, b) => a - b);
 }
 
+// Interactive multi-select UI using raw terminal key events.
 async function askMultiChoiceInteractive(question, options, defaultIndexes = []) {
   if (
     !process.stdin.isTTY ||
@@ -1576,6 +1603,7 @@ async function askMultiChoiceInteractive(question, options, defaultIndexes = [])
   });
 }
 
+// Converts arbitrary app names to URL/path-safe slugs.
 function slugify(value) {
   return value
     .normalize("NFD")
@@ -1586,12 +1614,14 @@ function slugify(value) {
     .replace(/-{2,}/g, "-");
 }
 
+// Extracts the Composer package name from a package spec string.
 function packageNameFromSpec(spec) {
   const trimmed = spec.trim();
   const index = trimmed.indexOf(":");
   return index === -1 ? trimmed : trimmed.slice(0, index).trim();
 }
 
+// Merges package specs by package name, keeping the last declaration.
 function mergePackageSpecs(specs) {
   const map = new Map();
   for (const spec of specs) {
@@ -1603,6 +1633,7 @@ function mergePackageSpecs(specs) {
   return [...map.values()];
 }
 
+// Splits comma/space-separated package input into normalized entries.
 function splitPackageInput(raw) {
   return raw
     .split(/[\s,]+/g)
@@ -1610,6 +1641,7 @@ function splitPackageInput(raw) {
     .filter(Boolean);
 }
 
+// Normalizes test-suite aliases to canonical Laravel flags.
 function normalizeLaravelTestSuiteFlag(value) {
   if (typeof value !== "string") {
     return null;
@@ -1627,6 +1659,7 @@ function normalizeLaravelTestSuiteFlag(value) {
   return null;
 }
 
+// Normalizes Laravel scaffold flags and enforces a single test suite flag.
 function normalizeLaravelFlags(
   flags,
   fallback = ["--npm", "--livewire", "--boost", "--pest"],
@@ -1672,6 +1705,7 @@ function normalizeLaravelFlags(
   return [...startupFlags, testSuiteFlag || "--pest"];
 }
 
+// Converts configured optional package IDs to option indexes.
 function getOptionIndexesByIds(ids, fallback = []) {
   if (!Array.isArray(ids) || ids.length === 0) {
     return [...fallback];
@@ -1692,6 +1726,7 @@ function getOptionIndexesByIds(ids, fallback = []) {
   return indexes.length > 0 ? indexes : [...fallback];
 }
 
+// Executes a subprocess and resolves/rejects based on exit code.
 function runProcess(command, args, options = {}) {
   const { cwd = process.cwd(), stdio = "inherit", env = process.env } = options;
 
@@ -1713,6 +1748,7 @@ function runProcess(command, args, options = {}) {
   });
 }
 
+// Executes a command with standard installer logging and optional failure behavior.
 async function runCommand(command, args, options = {}) {
   const { cwd = process.cwd(), required = true, warnOnFailure = true } = options;
 
@@ -1734,6 +1770,7 @@ async function runCommand(command, args, options = {}) {
   }
 }
 
+// Checks if an Artisan command exists in the current project.
 async function artisanCommandExists(projectDir, commandName) {
   try {
     await runProcess("php", ["artisan", commandName, "--help"], {
@@ -1746,6 +1783,7 @@ async function artisanCommandExists(projectDir, commandName) {
   }
 }
 
+// Runs an Artisan command only if it exists; otherwise logs a skip message.
 async function runArtisanIfAvailable(
   projectDir,
   commandName,
@@ -1772,6 +1810,7 @@ async function runArtisanIfAvailable(
   });
 }
 
+// Detects whether a directory appears to be a Laravel project root.
 function isLaravelProject(directory) {
   return (
     fs.existsSync(path.join(directory, "artisan")) &&
@@ -1780,6 +1819,7 @@ function isLaravelProject(directory) {
   );
 }
 
+// Returns true when the directory does not exist or has no entries.
 function directoryIsEmpty(directory) {
   if (!fs.existsSync(directory)) {
     return true;
@@ -1787,6 +1827,7 @@ function directoryIsEmpty(directory) {
   return fs.readdirSync(directory).length === 0;
 }
 
+// Builds a compact timestamp used for backup path suffixes.
 function getTimestampLabel() {
   const now = new Date();
   const pad = (value) => String(value).padStart(2, "0");
@@ -1795,6 +1836,7 @@ function getTimestampLabel() {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
+// Computes a unique backup path for an existing project directory.
 function getBackupTargetPath(sourcePath) {
   const base = `${sourcePath}.backup-${getTimestampLabel()}`;
   if (!fs.existsSync(base)) {
@@ -1808,6 +1850,7 @@ function getBackupTargetPath(sourcePath) {
   return `${base}-${count}`;
 }
 
+// Moves a path to backup target, falling back to copy+delete when rename fails.
 function backupExistingPath(sourcePath) {
   const targetPath = getBackupTargetPath(sourcePath);
 
@@ -1821,6 +1864,7 @@ function backupExistingPath(sourcePath) {
   }
 }
 
+// Escapes an environment value when quoting is required.
 function envSafeValue(value) {
   const text = String(value);
   if (/^[A-Za-z0-9_./:@-]*$/.test(text)) {
@@ -1829,6 +1873,7 @@ function envSafeValue(value) {
   return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+// Sets or appends a key/value pair in .env file content.
 function setEnvValue(content, key, value) {
   const safe = envSafeValue(value);
   const regex = new RegExp(`^${key}=.*$`, "m");
@@ -1841,6 +1886,7 @@ function setEnvValue(content, key, value) {
   return `${content}${separator}${key}=${safe}\n`;
 }
 
+// Applies database/app-related environment values to the project .env file.
 function applyEnvConfig(projectDir, config) {
   const envPath = path.join(projectDir, ".env");
   const envExamplePath = path.join(projectDir, ".env.example");
@@ -1877,6 +1923,7 @@ function applyEnvConfig(projectDir, config) {
   fs.writeFileSync(envPath, env, "utf8");
 }
 
+// Reads package names from require and require-dev sections of composer.json.
 function readComposerPackages(projectDir) {
   const composerPath = path.join(projectDir, "composer.json");
   if (!fs.existsSync(composerPath)) {
@@ -1892,6 +1939,7 @@ function readComposerPackages(projectDir) {
   return names;
 }
 
+// Detects whether two-factor migration columns already exist.
 function hasTwoFactorMigration(projectDir) {
   const migrationsDir = path.join(projectDir, "database", "migrations");
   if (!fs.existsSync(migrationsDir)) {
@@ -1917,6 +1965,7 @@ function hasTwoFactorMigration(projectDir) {
   });
 }
 
+// Removes duplicate two-factor migrations to avoid migrate conflicts.
 function cleanupDuplicateTwoFactorMigrations(projectDir) {
   const migrationsDir = path.join(projectDir, "database", "migrations");
   if (!fs.existsSync(migrationsDir)) {
@@ -1948,6 +1997,7 @@ function cleanupDuplicateTwoFactorMigrations(projectDir) {
   return removed;
 }
 
+// Collects auto-mode installation config from prompts and presets.
 async function collectAutoConfig(preset = {}) {
   section("Auto Mode");
 
@@ -2012,6 +2062,7 @@ async function collectAutoConfig(preset = {}) {
   };
 }
 
+// Collects manual-mode installation config with full interactive choices.
 async function collectManualConfig(preset = {}) {
   section("Manual Mode");
 
@@ -2158,6 +2209,7 @@ async function collectManualConfig(preset = {}) {
   };
 }
 
+// Converts normalized config package specs into a fast lookup Set.
 function packageSetFromConfig(config) {
   const names = new Set();
   config.normalPackages.forEach((spec) => names.add(packageNameFromSpec(spec)));
@@ -2170,6 +2222,7 @@ function packageSetFromConfig(config) {
   return names;
 }
 
+// Extracts an object property block (e.g. server: { ... }) from source text.
 function extractObjectPropertyBlock(source, propertyName) {
   const propertyIndex = source.indexOf(`${propertyName}:`);
   if (propertyIndex === -1) {
@@ -2212,6 +2265,7 @@ function extractObjectPropertyBlock(source, propertyName) {
   return source.slice(propertyIndex, end).trimEnd();
 }
 
+// Indents every line of a multi-line string by a fixed number of spaces.
 function indentLines(value, spaces) {
   const indentation = " ".repeat(spaces);
   return value
@@ -2220,6 +2274,7 @@ function indentLines(value, spaces) {
     .join("\n");
 }
 
+// Ensures composer plugin allow-list contains wikimedia/composer-merge-plugin.
 async function ensureComposerPluginAllowList(projectDir, packages) {
   const needsMergePlugin =
     packages.has("coolsam/modules") ||
@@ -2292,6 +2347,7 @@ async function ensureComposerPluginAllowList(projectDir, packages) {
   }
 }
 
+// Ensures nwidart merge-plugin/autoload composer settings are correctly configured.
 async function ensureNwidartComposerMergeConfig(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return false;
@@ -2376,6 +2432,7 @@ async function ensureNwidartComposerMergeConfig(projectDir, packages) {
   return true;
 }
 
+// Rewrites vite.config.js for nwidart module asset collection when possible.
 async function ensureNwidartViteMainConfig(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return false;
@@ -2444,6 +2501,7 @@ async function ensureNwidartViteMainConfig(projectDir, packages) {
   return true;
 }
 
+// Creates modules_statuses.json based on current Modules directory contents.
 async function ensureNwidartModuleStatusesFile(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return false;
@@ -2479,6 +2537,7 @@ async function ensureNwidartModuleStatusesFile(projectDir, packages) {
   return true;
 }
 
+// Ensures the Modules directory exists for nwidart projects.
 async function ensureNwidartModulesDirectory(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return false;
@@ -2495,6 +2554,7 @@ async function ensureNwidartModulesDirectory(projectDir, packages) {
   return true;
 }
 
+// Ensures CoreModule exists and attempts Filament module integration.
 async function ensureNwidartCoreModule(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return;
@@ -2524,6 +2584,7 @@ async function ensureNwidartCoreModule(projectDir, packages) {
   );
 }
 
+// Returns a status snapshot of all nwidart setup invariants.
 function getNwidartSetupStatus(projectDir) {
   const composerPath = path.join(projectDir, "composer.json");
   const viteConfigPath = path.join(projectDir, "vite.config.js");
@@ -2568,6 +2629,7 @@ function getNwidartSetupStatus(projectDir) {
   };
 }
 
+// Prints a compact nwidart setup summary and missing pieces.
 function printNwidartSetupSummary(projectDir, packages) {
   if (!packages.has("nwidart/laravel-modules")) {
     return;
@@ -2610,6 +2672,7 @@ function printNwidartSetupSummary(projectDir, packages) {
   warn(`Nwidart setup incomplete: ${missing.join(", ")}`);
 }
 
+// Runs package-specific setup commands, migrations, and optional admin creation.
 async function runSetupCommands(projectDir, packages, config) {
   section("Setup Commands");
 
@@ -2802,6 +2865,7 @@ async function runSetupCommands(projectDir, packages, config) {
   }
 }
 
+// Runs full installation workflow for new projects.
 async function runInstallFlow(config, runtimeOptions = state.runtime) {
   section("Installation Plan");
   info(`Mode: ${config.mode}`);
@@ -2932,6 +2996,7 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
   }
 }
 
+// Runs update workflow for an existing Laravel project.
 async function runUpdateFlow(projectDir) {
   section("Update Mode");
   info(`Project: ${projectDir}`);
@@ -2981,6 +3046,7 @@ async function runUpdateFlow(projectDir) {
   await runCommand("npm", ["run", "build"], { cwd: projectDir, required: true });
 }
 
+// Prints final success output including admin credentials and accumulated warnings.
 function printFinalNotes(projectPath) {
   section("Done");
   ok("INSTALAR completed successfully.");
@@ -3000,6 +3066,7 @@ function printFinalNotes(projectPath) {
   }
 }
 
+// Wrapper for fs.accessSync that returns a boolean instead of throwing.
 function checkAccess(targetPath, mode) {
   try {
     fs.accessSync(targetPath, mode);
@@ -3009,6 +3076,7 @@ function checkAccess(targetPath, mode) {
   }
 }
 
+// Runs post-install health checks for key artisan commands and frontend manifest.
 async function runHealthChecks(projectPath) {
   section("Health Check");
 
@@ -3038,6 +3106,7 @@ async function runHealthChecks(projectPath) {
   }
 }
 
+// Verifies essential filesystem permissions and optionally starts the dev server.
 async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = state.runtime) {
   section("Permissions");
 
@@ -3106,12 +3175,14 @@ async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = sta
   await runCommand("composer", ["run", "dev"], { cwd: projectPath, required: false });
 }
 
+// Executes all final post-install steps in order.
 async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
   printFinalNotes(projectPath);
   await runHealthChecks(projectPath);
   await runFinalPermissionAndServerStep(projectPath, runtimeOptions);
 }
 
+// Prints Node-phase usage help.
 function printNodeUsage() {
   console.log("INSTALAR Installer");
   console.log("");
@@ -3130,6 +3201,8 @@ function printNodeUsage() {
   console.log("  --start-server          Automatically run composer run dev at the end");
 }
 
+// Node-phase main entrypoint.
+// Resolves runtime mode, dispatches to install/update flow, then finalizes.
 async function main() {
   const args = process.argv.slice(2);
   const cliOptions = parseCliArgs(args);
@@ -3241,6 +3314,7 @@ async function main() {
   await finalizeProject(config.projectPath, state.runtime);
 }
 
+// Global top-level error handler for the Node phase.
 main().catch((error) => {
   section("Error");
   fail(error.message || String(error));
@@ -3248,11 +3322,13 @@ main().catch((error) => {
 });
 NODE
 
+# Route Node stdin to /dev/tty when available so prompts still work after curl|bash piping.
 NODE_STDIN="/dev/stdin"
 if (( BASH_HAS_TTY == 1 )); then
   NODE_STDIN="/dev/tty"
 fi
 
+# Execute embedded Node phase with original CLI args.
 if node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
   exit 0
 else
