@@ -1168,7 +1168,7 @@ const OPTIONAL_PACKAGE_CHOICES = [
   { id: "excel", title: "Laravel Excel", normal: ["maatwebsite/excel"] },
   { id: "ide_helper", title: "Laravel IDE Helper", dev: ["barryvdh/laravel-ide-helper"] },
   { id: "migration_generator", title: "Migration Generator", dev: ["kitloong/laravel-migrations-generator"] },
-  { id: "model_types", title: "Spatie Model Types", normal: ["spatie/model-states"] },
+  { id: "model_types", title: "Spatie Model Types", normal: ["spatie/laravel-model-states"] },
   { id: "laravel_breadcrumbs", title: "Breadcrumbs", normal: ["davejamesmiller/laravel-breadcrumbs"] },
   { id: "flare", title: "Flare Error Tracking", dev: ["facade/ignition"] },
 ];
