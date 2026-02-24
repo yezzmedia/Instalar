@@ -86,6 +86,8 @@ declare -A DEP_UPDATE_TARGET=()                                # Maps dep name -
 # Flags for script behavior
 BASH_NON_INTERACTIVE=0      # Set to 1 to skip all prompts (--non-interactive)
 BASH_APPLY_DEP_UPDATES=0   # Set to 1 to auto-apply dependency updates (--deps-update)
+BASH_VERBOSE=0              # Set to 1 to enable verbose output (--verbose)
+BASH_DEBUG=0                # Set to 1 to enable debug mode (--debug)
 BASH_HAS_TTY=0             # Set to 1 if /dev/tty is available for interactive input
 BASH_TTY_FD=""             # File descriptor number for /dev/tty (used for interactive prompts)
 
@@ -179,6 +181,8 @@ Options:
   --allow-delete-existing Replace existing target directories in non-interactive mode
   --start-server          Automatically run composer run dev at the end
   --deps-update           Apply dependency updates in Bash phase
+  --verbose               Enable verbose output
+  --debug                 Enable debug mode (shows all commands)
 
 Flow:
   1) Bash checks/installs/updates dependencies
@@ -1045,6 +1049,12 @@ parse_bash_args() {
       --deps-update)
         BASH_APPLY_DEP_UPDATES=1
         ;;
+      --verbose)
+        BASH_VERBOSE=1
+        ;;
+      --debug)
+        BASH_DEBUG=1
+        ;;
     esac
   done
 }
@@ -1065,6 +1075,12 @@ main_bash() {
   done
 
   parse_bash_args "$@"
+
+  # Enable debug mode if --debug flag is set
+  if (( BASH_DEBUG == 1 )); then
+    set -x
+  fi
+
   detect_bash_tty
   require_bash_tty_for_interactive
 
@@ -1170,6 +1186,8 @@ const state = {
     mode: null,
     configPath: null,
     config: {},
+    verbose: false,
+    debug: false,
   },
 };
 
@@ -1199,6 +1217,20 @@ function fail(message) {
   console.log(`  ${color("[ERR ]", C.red)} ${message}`);
 }
 
+// Prints a verbose message when --verbose flag is set.
+function verbose(message) {
+  if (state.runtime.verbose || state.runtime.debug) {
+    console.log(color(`  [VERBOSE] ${message}`, C.dim));
+  }
+}
+
+// Prints a debug message when --debug flag is set.
+function debug(message) {
+  if (state.runtime.debug) {
+    console.log(color(`  [DEBUG] ${message}`, C.gray));
+  }
+}
+
 // Prints a visual section heading.
 function section(title) {
   const line = "-".repeat(72);
@@ -1218,6 +1250,8 @@ function parseCliArgs(args) {
     mode: null,
     allowDeleteExisting: false,
     startServer: false,
+    verbose: false,
+    debug: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -1250,6 +1284,16 @@ function parseCliArgs(args) {
 
     if (arg === "--start-server") {
       options.startServer = true;
+      continue;
+    }
+
+    if (arg === "--verbose") {
+      options.verbose = true;
+      continue;
+    }
+
+    if (arg === "--debug") {
+      options.debug = true;
       continue;
     }
 
@@ -1326,6 +1370,8 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     mode: ["auto", "manual", "update"].includes(resolvedMode) ? resolvedMode : null,
     configPath,
     config: fileConfig || {},
+    verbose: Boolean(cliOptions.verbose || fileConfig?.verbose === true),
+    debug: Boolean(cliOptions.debug || fileConfig?.debug === true),
   };
 }
 
@@ -1757,22 +1803,30 @@ function runProcess(command, args, options = {}) {
 // Executes a command with standard installer logging and optional failure behavior.
 async function runCommand(command, args, options = {}) {
   const { cwd = process.cwd(), required = true, warnOnFailure = true } = options;
+  const cmdStr = `${command} ${args.join(" ")}`.trim();
 
-  info(`Run: ${command} ${args.join(" ")}`);
+  // Use verbose() if verbose or debug is enabled
+  if (state.runtime.verbose || state.runtime.debug) {
+    verbose(`Executing: ${cmdStr}`);
+  } else {
+    info(`Run: ${cmdStr}`);
+  }
+
   try {
     await runProcess(command, args, { cwd });
     ok(`${command} ${args[0] ?? ""}`.trim());
-    return true;
+    return { exitCode: 0, success: true };
   } catch (error) {
+    const exitCode = error.exitCode || 1;
     if (required) {
       throw error;
     }
     if (warnOnFailure) {
-      warn(`Command failed and will be skipped: ${command} ${args.join(" ")}`);
+      warn(`Command failed and will be skipped: ${cmdStr}`);
     } else {
-      info(`Command failed and will be skipped: ${command} ${args.join(" ")}`);
+      info(`Command failed and will be skipped: ${cmdStr}`);
     }
-    return false;
+    return { exitCode, success: false };
   }
 }
 
