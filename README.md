@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.6** (Rosie)
+Current version: **0.1.9** (Rosie)
 
 ---
 
@@ -23,8 +23,11 @@ Current version: **0.1.6** (Rosie)
 
 - Creates new Laravel 12 projects (`laravel new`) or updates existing ones.
 - Supports **Auto**, **Manual**, and **Update** modes.
+- Prints a resolved install or update plan before execution.
+- Hides sensitive values in prompts and logs wherever possible.
 - Checks system dependencies with versions (`php`, `composer`, `laravel`, `node`, `npm`).
 - Installs missing dependencies and can apply available dependency updates.
+- Supports package presets (`minimal`, `standard`, `full`) and richer optional package labels.
 - Installs and configures Filament, Fortify, Boost, and optional packages.
 - Runs build/optimize steps in a practical order.
 - Runs post-install health checks and permission checks.
@@ -62,6 +65,9 @@ Help:
 # 4) Replace existing target, keep backup, generate admin password
 ./instalar.sh --non-interactive --mode auto --allow-delete-existing --backup --admin-generate
 
+# 4b) Replace a generic non-empty path only with the explicit high-risk override
+./instalar.sh --non-interactive --mode auto --allow-delete-any-existing
+
 # 5) Update existing Laravel project in current directory
 ./instalar.sh --mode update
 
@@ -71,8 +77,17 @@ Help:
 # 7) Verbose output for debugging
 ./instalar.sh --verbose
 
-# 8) Debug mode (shows all commands)
+# 8) Preview the resolved plan without creating or updating files
+./instalar.sh --print-plan
+
+# 9) Use the full package preset and skip boost:install
+./instalar.sh --mode auto --preset full --skip-boost-install
+
+# 10) Debug mode (shows all commands)
 ./instalar.sh --debug
+
+# 11) Continue unattended runs even when health checks fail
+./instalar.sh --non-interactive --continue-on-health-check-failure
 ```
 
 ---
@@ -117,10 +132,15 @@ Help:
 | `--help` | Show help |
 | `--config <file>` | Load JSON configuration file |
 | `--non-interactive`, `-y`, `--yes` | Run without prompts, use defaults/config |
+| `--print-plan` | Collect input, print the resolved install/update plan, and exit |
+| `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
+| `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
+| `--continue-on-health-check-failure` | Continue non-interactive runs after failed final health checks |
 | `--mode <auto\|manual\|update>` | Force mode |
 | `--backup` | Backup existing target directory before replacing |
 | `--admin-generate` | Generate admin password instead of `password` |
 | `--allow-delete-existing` | Allow replacing existing target directory in non-interactive mode |
+| `--allow-delete-any-existing` | Also allow replacing generic or git-managed paths in non-interactive mode |
 | `--start-server` | Run `composer run dev` automatically at the end |
 | `--deps-update` | Apply detected dependency updates in Bash phase |
 | `--verbose` | Enable verbose output |
@@ -128,13 +148,40 @@ Help:
 
 ---
 
+## Plan Preview and Presets
+
+- INSTALAR prints a resolved plan before installation or update starts.
+- Interactive runs ask for confirmation against that plan before anything is changed.
+- `--print-plan` goes one step further: it resolves the flow, prints the plan, and exits without modifying files.
+- Package presets help choose a starting stack quickly:
+  - `minimal` keeps the install lean.
+  - `standard` adds Fortify and AI tooling.
+  - `full` adds a broader auth, monitoring, and DX stack.
+- Plan output never prints configured passwords.
+
+---
+
+## Safer Defaults
+
+- DB passwords are treated as secrets:
+  - interactive prompts are masked
+  - non-interactive logs print `(hidden)` instead of the value
+- Generated admin passwords are shown once at the end of the run.
+- Configured or default admin passwords are never printed back to the terminal.
+- Non-interactive path replacement is stricter:
+  - `--allow-delete-existing` only covers empty directories and detected Laravel projects
+  - `--allow-delete-any-existing` is required for generic non-empty paths and Git repositories
+
+---
+
 ## Modes
 
 ### Auto
 
-- Asks only for project name.
+- Asks for project name and package preset.
 - Uses SQLite by default.
 - Uses Laravel startup flags: `--npm --livewire --boost --pest`.
+- Uses the selected preset to prefill optional packages.
 - Creates default admin by default:
   - Email: `admin@example.com`
   - Password: `password` (or generated with `--admin-generate`)
@@ -146,7 +193,7 @@ Help:
   - database
   - Laravel startup flags
   - Laravel test suite (`Pest` or `PHPUnit`)
-  - optional packages + custom Composer packages
+  - package preset, optional packages, and custom Composer packages
   - admin creation
   - optional `git init`
 - Package multi-select keyboard support:
@@ -154,10 +201,13 @@ Help:
   - `Space` toggle
   - `Enter` confirm
   - includes `Select all`
+- Optional package choices show a category and short summary to make selection easier.
+- DB password prompts are masked.
 
 ### Update
 
 - For existing Laravel projects.
+- Prints the detected package set before execution.
 - Runs `composer update`, migrations, build, and optional Boost setup.
 
 ---
@@ -169,7 +219,7 @@ Help:
 3. Configure `.env`
 4. Install Composer packages
 5. Run setup commands (Fortify/Filament/Nwidart/etc.)
-6. `boost:install` (interactive)
+6. `boost:install` (interactive unless skipped)
 7. `php artisan optimize`
 8. `npm install` + `npm run build`
 9. Health check + permission check + optional server start
@@ -219,9 +269,14 @@ Example `instalar.json`:
   "mode": "manual",
   "projectName": "My App",
   "projectPath": "./my-app",
+  "preset": "standard",
   "allowDeleteExisting": true,
+  "allowDeleteAnyExisting": false,
   "backup": true,
   "adminGenerate": true,
+  "printPlan": false,
+  "skipBoostInstall": false,
+  "continueOnHealthCheckFailure": false,
   "startServer": false,
   "database": {
     "connection": "sqlite"
@@ -242,10 +297,16 @@ Example `instalar.json`:
 Notes:
 
 - If `--config` is omitted, `./instalar.json` is loaded automatically when present.
+- `preset` can be `minimal`, `standard`, or `full`.
+- Set `"printPlan": true` to resolve and preview the flow without modifying files.
+- Set `"skipBoostInstall": true` when unattended runs should skip the interactive Boost step.
+- Set `"allowDeleteAnyExisting": true` only when unattended runs may replace a generic non-empty directory or Git repository.
 - Test suite can be set via `laravelFlags` (`--pest` / `--phpunit`) or optional `"testSuite": "pest|phpunit"`.
+- Set `"continueOnHealthCheckFailure": true` when unattended runs should warn and continue after failed final health checks.
 - In non-interactive mode with an existing target directory:
   - without `--allow-delete-existing` => abort
-  - with `--allow-delete-existing` => replace (with `--backup`, backup first)
+  - with `--allow-delete-existing` => replace only empty directories or detected Laravel projects
+  - with `--allow-delete-any-existing` => replace generic non-empty paths too (with `--backup`, backup first)
 
 ---
 
@@ -271,10 +332,12 @@ If any health check fails:
 
 - Interactive mode prompts you to continue or abort.
 - Non-interactive mode aborts with exit code `1`.
+- Add `--continue-on-health-check-failure` or `"continueOnHealthCheckFailure": true` to continue anyway.
 
 Optional afterward:
 
 - `composer run dev`
+- `php artisan boost:install` if the Boost step was skipped
 
 ---
 
@@ -289,7 +352,18 @@ Optional afterward:
 
 - **Existing target directory**
   - Interactive mode: installer asks for confirmation.
-  - Non-interactive mode: use `--allow-delete-existing`, optionally `--backup`.
+  - Non-interactive mode: use `--allow-delete-existing` for empty/Laravel paths, or `--allow-delete-any-existing` for generic/Git paths, optionally `--backup`.
+
+---
+
+## Quality Gates
+
+- Pull requests and pushes to `main` run GitHub Actions for:
+  - `bash -n instalar.sh`
+  - `shellcheck instalar.sh`
+  - `./instalar.sh --help`
+  - `node --test`
+- Tag pushes matching `v*` validate release metadata and create/update a GitHub draft release from the latest changelog section.
 
 ---
 
@@ -304,10 +378,9 @@ These features are planned or under consideration:
 - Improved verbose output for failed commands
 
 ### Mid-term
-- Automated tests for the installer itself
-- GitHub Actions CI/CD workflow
 - Extended database support (PostgreSQL, SQL Server)
 - Plugin system for custom packages
+- Cross-platform CI coverage for more shell/package-manager combinations
 
 ### Long-term
 - Optional web-based installation UI
@@ -318,6 +391,8 @@ These features are planned or under consideration:
 ## Project Files
 
 - `instalar.sh` — main installer (single required file)
+- `tests/` — Node-based installer smoke and consistency tests
+- `.github/workflows/` — CI and draft-release automation
 - `CHANGELOG.md` — change history
 - `LICENSE` — MIT license
 
