@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2026-03-08 (Rosie)
+
+### Added
+
+- Strict JSON config validation for unknown keys, invalid presets, and invalid nested values
+- `--allow-delete-any-existing` / `allowDeleteAnyExisting` for explicitly replacing generic non-empty or Git-managed paths
+- Secret-aware tests for hidden prompts, command redaction, and admin password handling
+
+### Changed
+
+- DB password prompts are now masked and hidden in non-interactive logs
+- Installation plans now show path classification, secret usage, and admin password strategy without exposing plaintext values
+- Filament admin creation no longer passes the password through process arguments
+- Non-interactive replacement rules now distinguish empty directories, Laravel projects, Git repositories, and generic paths
+
+### Fixed
+
+- Stop echoing configured or default admin passwords in the final summary
+- Resolve imported auth model aliases correctly when creating the Filament admin user
+- Align README/help/release metadata with the hardened installer behavior
+
+## [0.1.8] - 2026-03-08 (Rosie)
+
+### Added
+
+- `--print-plan` CLI/config preview mode to resolve install or update choices without modifying files
+- `--preset <minimal|standard|full>` package presets for faster Auto and Manual setup
+- `--skip-boost-install` CLI/config override to skip the interactive Boost step
+- Plan-output tests for presets, preview mode, and path replacement behavior
+
+### Changed
+
+- Auto and Manual flows now surface a package preset before package selection
+- Install and update flows now print a resolved execution plan before they start
+- Final next-step notes now print only after health checks and permission checks complete
+- Optional package prompts now include categories and short summaries
+
+### Fixed
+
+- Align README, help output, and release metadata with the new UX flags
+- Replace the last visible mixed-language dependency update status line in the Bash phase
+
+## [0.1.7] - 2026-03-08 (Rosie)
+
+### Added
+
+- `--continue-on-health-check-failure` CLI override and matching JSON config support for unattended runs
+- Node-based consistency tests for runtime option merging and release metadata
+- GitHub Actions CI workflow for Bash syntax, ShellCheck, help smoke tests, and Node tests
+- GitHub Actions draft-release workflow for `v*` tags using the latest changelog section
+
+### Changed
+
+- Health checks now run through a unified evaluation flow before deciding whether to abort or continue
+- Release metadata now includes an explicit installer codename for tag validation
+
+### Fixed
+
+- Keep installer version, README version, changelog header, and release tag format aligned
+
 ## [0.1.6] - 2026-03-08 (Rosie)
 
 ### Fixed

@@ -36,7 +36,8 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.6"
+SCRIPT_VERSION="0.1.9"
+SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
 # Terminal Color Codes
@@ -86,6 +87,7 @@ declare -A DEP_UPDATE_TARGET=()                                # Maps dep name -
 # Flags for script behavior
 BASH_NON_INTERACTIVE=0      # Set to 1 to skip all prompts (--non-interactive)
 BASH_APPLY_DEP_UPDATES=0   # Set to 1 to auto-apply dependency updates (--deps-update)
+BASH_PRINT_PLAN=0           # Set to 1 to print the resolved installation/update plan (--print-plan)
 BASH_VERBOSE=0              # Set to 1 to enable verbose output (--verbose)
 BASH_DEBUG=0                # Set to 1 to enable debug mode (--debug)
 BASH_HAS_TTY=0             # Set to 1 if /dev/tty is available for interactive input
@@ -165,7 +167,7 @@ banner() {
 # Prints the command-line help text
 print_usage() {
   cat <<EOF
-INSTALAR v${SCRIPT_VERSION}
+INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})
 
 Usage:
   ./instalar.sh
@@ -175,10 +177,17 @@ Usage:
 Options:
   --config <file>         Path to JSON configuration (Node phase)
   --non-interactive       No prompts, use defaults/config
+  --print-plan            Collect input and print the resolved plan without modifying files
+  --preset <name>         Package preset: minimal, standard, or full
+  --skip-boost-install    Skip interactive boost:install step
+  --continue-on-health-check-failure
+                          Continue unattended runs even when final health checks fail
   --backup                Backup existing target directory before replacing
   --admin-generate        Generate admin password instead of "password"
   --mode <auto|manual|update>
   --allow-delete-existing Replace existing target directories in non-interactive mode
+  --allow-delete-any-existing
+                         Also allow replacing generic or git-managed directories
   --start-server          Automatically run composer run dev at the end
   --deps-update           Apply dependency updates in Bash phase
   --verbose               Enable verbose output
@@ -426,7 +435,7 @@ dep_version() {
 
   raw="${raw%%$'\n'*}"
   if [[ -z "${raw}" ]]; then
-    raw="Version unbekannt"
+    raw="unknown version"
   fi
   printf '%s' "${raw}"
 }
@@ -641,6 +650,7 @@ detect_composer_update() {
   local latest
 
   current="$(composer --version 2>/dev/null | sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/' || true)"
+  # shellcheck disable=SC2016
   latest="$(composer show composer/composer --all --format=json 2>/dev/null | php -r '
     $data = json_decode(stream_get_contents(STDIN), true);
     if (! is_array($data)) {
@@ -664,6 +674,7 @@ detect_composer_update() {
 # Calls: register_dep_update if an update is available
 detect_laravel_installer_update() {
   local pair
+  # shellcheck disable=SC2016
   pair="$(composer global outdated laravel/installer --direct --format=json 2>/dev/null | php -r '
     $data = json_decode(stream_get_contents(STDIN), true);
     if (! is_array($data)) {
@@ -742,13 +753,13 @@ print_available_updates() {
     fi
   done
 
-  printf '\n  %b\n' "$(paint "${BOLD}${WHITE}" "Verfuegbare Updates")"
+  printf '\n  %b\n' "$(paint "${BOLD}${WHITE}" "Available Updates")"
   printf '  %b %b|%b %b %b|%b %b\n' \
     "$(paint "${CYAN}" "$(printf "%-${dep_width}s" "Dependency")")" \
     "${DIM}" "${NC}" \
-    "$(paint "${WHITE}" "$(printf "%-${current_width}s" "Aktuell")")" \
+    "$(paint "${WHITE}" "$(printf "%-${current_width}s" "Current")")" \
     "${DIM}" "${NC}" \
-    "$(paint "${GREEN}" "Ziel")"
+    "$(paint "${GREEN}" "Target")"
 
   for dep in "${DEPS_WITH_UPDATES[@]}"; do
     printf '  %b %b|%b %b %b|%b %b\n' \
@@ -784,7 +795,7 @@ apply_available_updates() {
     applied_actions[$action]=1
 
     if update_dep "${dep}"; then
-      ok "Aktualisiert: ${dep} (${DEP_UPDATE_CURRENT[$dep]} -> ${DEP_UPDATE_TARGET[$dep]})"
+      ok "Updated: ${dep} (${DEP_UPDATE_CURRENT[$dep]} -> ${DEP_UPDATE_TARGET[$dep]})"
     else
       warn "Update failed: ${dep}"
     fi
@@ -979,6 +990,26 @@ check_and_prepare_dependencies() {
   refresh_dep_state
   print_dep_table
 
+  if (( BASH_PRINT_PLAN == 1 )); then
+    if (( DEP_AVAILABLE["node"] == 0 )); then
+      fail "Plan preview requires node to be installed."
+      exit 1
+    fi
+
+    for dep in "${DEPS[@]}"; do
+      if [[ "${dep}" == "node" ]]; then
+        continue
+      fi
+
+      if (( DEP_AVAILABLE["${dep}"] == 0 )); then
+        warn "Plan preview: dependency installation skipped for ${dep}."
+      fi
+    done
+
+    ok "Dependency inspection complete. Continuing with plan preview."
+    return 0
+  fi
+
   local dep
   for dep in "${DEPS[@]}"; do
     if (( DEP_AVAILABLE["${dep}"] == 0 )); then
@@ -1049,6 +1080,9 @@ parse_bash_args() {
       --deps-update)
         BASH_APPLY_DEP_UPDATES=1
         ;;
+      --print-plan)
+        BASH_PRINT_PLAN=1
+        ;;
       --verbose)
         BASH_VERBOSE=1
         ;;
@@ -1081,6 +1115,10 @@ main_bash() {
     set -x
   fi
 
+  if (( BASH_VERBOSE == 1 )); then
+    info "Verbose Bash output enabled."
+  fi
+
   detect_bash_tty
   require_bash_tty_for_interactive
 
@@ -1104,6 +1142,7 @@ main_bash "$@"
 
 # Create temporary file for embedded Node.js code
 NODE_TMP="$(mktemp "${TMPDIR:-/tmp}/instalar-node-XXXXXX.cjs")"
+# shellcheck disable=SC2317
 cleanup_node_tmp() {
   rm -f "${NODE_TMP}"
 }
@@ -1114,6 +1153,7 @@ cat > "${NODE_TMP}" <<'NODE'
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
@@ -1142,46 +1182,230 @@ const C = {
 // =============================================================================
 // Defines selectable Composer packages for manual mode.
 const OPTIONAL_PACKAGE_CHOICES = [
-  { id: "fortify", title: "Fortify Auth Backend", normal: ["laravel/fortify"] },
-  { id: "ai", title: "Laravel AI SDK", normal: ["laravel/ai"] },
-  { id: "horizon", title: "Horizon Queue Dashboard", normal: ["laravel/horizon"] },
-  { id: "pulse", title: "Pulse Monitoring", normal: ["laravel/pulse"] },
-  { id: "socialite", title: "Socialite OAuth", normal: ["laravel/socialite"] },
-  { id: "flux", title: "Livewire Flux UI", normal: ["livewire/flux"] },
-  { id: "telescope", title: "Telescope Debug Assistant", normal: ["laravel/telescope"] },
-  { id: "pail", title: "Pail Log Tail", normal: ["laravel/pail"] },
-  { id: "sanctum", title: "Sanctum API Tokens", normal: ["laravel/sanctum"] },
-  { id: "passport", title: "Passport OAuth2 Server", normal: ["laravel/passport"] },
-  { id: "pennant", title: "Pennant Feature Flags", normal: ["laravel/pennant"] },
-  { id: "reverb", title: "Reverb WebSockets", normal: ["laravel/reverb"] },
-  { id: "spatie_permission", title: "Spatie Permission", normal: ["spatie/laravel-permission"] },
-  { id: "spatie_activitylog", title: "Spatie Activitylog", normal: ["spatie/laravel-activitylog"] },
-  { id: "spatie_medialibrary", title: "Spatie Medialibrary", normal: ["spatie/laravel-medialibrary"] },
-  { id: "spatie_health", title: "Spatie Health", normal: ["spatie/laravel-health"] },
+  {
+    id: "fortify",
+    title: "Fortify Auth Backend",
+    category: "Auth",
+    summary: "Headless login, reset, 2FA, and auth flows.",
+    normal: ["laravel/fortify"],
+  },
+  {
+    id: "ai",
+    title: "Laravel AI SDK",
+    category: "AI",
+    summary: "Chat, completions, tools, and model providers.",
+    normal: ["laravel/ai"],
+  },
+  {
+    id: "horizon",
+    title: "Horizon Queue Dashboard",
+    category: "Ops",
+    summary: "Queue monitoring and worker visibility.",
+    normal: ["laravel/horizon"],
+  },
+  {
+    id: "pulse",
+    title: "Pulse Monitoring",
+    category: "Ops",
+    summary: "Application metrics and performance dashboards.",
+    normal: ["laravel/pulse"],
+  },
+  {
+    id: "socialite",
+    title: "Socialite OAuth",
+    category: "Auth",
+    summary: "OAuth logins for GitHub, Google, and others.",
+    normal: ["laravel/socialite"],
+  },
+  {
+    id: "flux",
+    title: "Livewire Flux UI",
+    category: "UI",
+    summary: "Flux component library for Livewire interfaces.",
+    normal: ["livewire/flux"],
+  },
+  {
+    id: "telescope",
+    title: "Telescope Debug Assistant",
+    category: "Dev",
+    summary: "Request, job, exception, and query inspection.",
+    normal: ["laravel/telescope"],
+  },
+  {
+    id: "pail",
+    title: "Pail Log Tail",
+    category: "Dev",
+    summary: "Developer-friendly Laravel log tailing.",
+    normal: ["laravel/pail"],
+  },
+  {
+    id: "sanctum",
+    title: "Sanctum API Tokens",
+    category: "Auth",
+    summary: "API token and SPA authentication support.",
+    normal: ["laravel/sanctum"],
+  },
+  {
+    id: "passport",
+    title: "Passport OAuth2 Server",
+    category: "Auth",
+    summary: "Full OAuth2 authorization server.",
+    normal: ["laravel/passport"],
+  },
+  {
+    id: "pennant",
+    title: "Pennant Feature Flags",
+    category: "Ops",
+    summary: "Feature flagging and rollout controls.",
+    normal: ["laravel/pennant"],
+  },
+  {
+    id: "reverb",
+    title: "Reverb WebSockets",
+    category: "Realtime",
+    summary: "First-party WebSocket server for broadcasting.",
+    normal: ["laravel/reverb"],
+  },
+  {
+    id: "spatie_permission",
+    title: "Spatie Permission",
+    category: "Auth",
+    summary: "Roles and permissions management.",
+    normal: ["spatie/laravel-permission"],
+  },
+  {
+    id: "spatie_activitylog",
+    title: "Spatie Activitylog",
+    category: "Ops",
+    summary: "Track who changed what in your app.",
+    normal: ["spatie/laravel-activitylog"],
+  },
+  {
+    id: "spatie_medialibrary",
+    title: "Spatie Medialibrary",
+    category: "Files",
+    summary: "Attach, transform, and manage media files.",
+    normal: ["spatie/laravel-medialibrary"],
+  },
+  {
+    id: "spatie_health",
+    title: "Spatie Health",
+    category: "Ops",
+    summary: "Health checks and status reporting.",
+    normal: ["spatie/laravel-health"],
+  },
   {
     id: "modules_bundle",
     title: "Modules Bundle (nwidart + coolsam)",
+    category: "Architecture",
+    summary: "Modular monolith tooling and module helpers.",
     normal: ["nwidart/laravel-modules", "coolsam/modules"],
   },
-  { id: "dusk", title: "Dusk (dev)", dev: ["laravel/dusk"] },
-  { id: "debugbar", title: "Debugbar (dev)", dev: ["barryvdh/laravel-debugbar"] },
-  { id: "excel", title: "Laravel Excel", normal: ["maatwebsite/excel"] },
-  { id: "ide_helper", title: "Laravel IDE Helper", dev: ["barryvdh/laravel-ide-helper"] },
-  { id: "migration_generator", title: "Migration Generator", dev: ["kitloong/laravel-migrations-generator"] },
-  { id: "model_types", title: "Spatie Model Types", normal: ["spatie/laravel-model-states"] },
-  { id: "laravel_breadcrumbs", title: "Breadcrumbs", normal: ["davejamesmiller/laravel-breadcrumbs"] },
-  { id: "flare", title: "Flare Error Tracking", normal: ["spatie/laravel-ignition"] },
+  {
+    id: "dusk",
+    title: "Dusk (dev)",
+    category: "Testing",
+    summary: "Browser automation for end-to-end tests.",
+    dev: ["laravel/dusk"],
+  },
+  {
+    id: "debugbar",
+    title: "Debugbar (dev)",
+    category: "Dev",
+    summary: "Debug toolbar for requests and queries.",
+    dev: ["barryvdh/laravel-debugbar"],
+  },
+  {
+    id: "excel",
+    title: "Laravel Excel",
+    category: "Data",
+    summary: "Excel and CSV import/export tooling.",
+    normal: ["maatwebsite/excel"],
+  },
+  {
+    id: "ide_helper",
+    title: "Laravel IDE Helper",
+    category: "Dev",
+    summary: "Generate IDE metadata and helper files.",
+    dev: ["barryvdh/laravel-ide-helper"],
+  },
+  {
+    id: "migration_generator",
+    title: "Migration Generator",
+    category: "Dev",
+    summary: "Generate migrations from existing database schemas.",
+    dev: ["kitloong/laravel-migrations-generator"],
+  },
+  {
+    id: "model_types",
+    title: "Spatie Model Types",
+    category: "Domain",
+    summary: "Model state classes and transitions.",
+    normal: ["spatie/laravel-model-states"],
+  },
+  {
+    id: "laravel_breadcrumbs",
+    title: "Breadcrumbs",
+    category: "UI",
+    summary: "Breadcrumb generation for navigation trails.",
+    normal: ["davejamesmiller/laravel-breadcrumbs"],
+  },
+  {
+    id: "flare",
+    title: "Flare Error Tracking",
+    category: "Ops",
+    summary: "Improved local exception pages and reporting helpers.",
+    normal: ["spatie/laravel-ignition"],
+  },
+];
+
+const PACKAGE_PRESETS = [
+  {
+    id: "minimal",
+    title: "Minimal",
+    description: "Lean starter with Filament and Boost only.",
+    optionalPackageIds: [],
+  },
+  {
+    id: "standard",
+    title: "Standard",
+    description: "Recommended starter with authentication and AI tooling.",
+    optionalPackageIds: ["fortify", "ai"],
+  },
+  {
+    id: "full",
+    title: "Full",
+    description: "Broader stack with auth, monitoring, API, and DX helpers.",
+    optionalPackageIds: [
+      "fortify",
+      "ai",
+      "flux",
+      "horizon",
+      "pulse",
+      "telescope",
+      "pail",
+      "sanctum",
+      "spatie_permission",
+      "spatie_activitylog",
+      "debugbar",
+    ],
+  },
 ];
 
 // Shared runtime state for warnings, generated admin credentials, and resolved options.
 const state = {
   warnings: [],
   createdAdmin: null,
+  boostInstallSkipped: false,
   runtime: {
     nonInteractive: false,
+    printPlan: false,
+    preset: "standard",
     backup: false,
     adminGenerate: false,
     allowDeleteExisting: false,
+    allowDeleteAnyExisting: false,
+    skipBoostInstall: false,
     startServer: false,
     mode: null,
     configPath: null,
@@ -1244,11 +1468,16 @@ function parseCliArgs(args) {
   const options = {
     help: false,
     nonInteractive: false,
+    printPlan: false,
+    preset: null,
+    continueOnHealthCheckFailure: false,
     configPath: null,
     backup: false,
     adminGenerate: false,
     mode: null,
     allowDeleteExisting: false,
+    allowDeleteAnyExisting: false,
+    skipBoostInstall: false,
     startServer: false,
     verbose: false,
     debug: false,
@@ -1267,6 +1496,21 @@ function parseCliArgs(args) {
       continue;
     }
 
+    if (arg === "--print-plan") {
+      options.printPlan = true;
+      continue;
+    }
+
+    if (arg === "--skip-boost-install") {
+      options.skipBoostInstall = true;
+      continue;
+    }
+
+    if (arg === "--continue-on-health-check-failure") {
+      options.continueOnHealthCheckFailure = true;
+      continue;
+    }
+
     if (arg === "--backup") {
       options.backup = true;
       continue;
@@ -1279,6 +1523,11 @@ function parseCliArgs(args) {
 
     if (arg === "--allow-delete-existing") {
       options.allowDeleteExisting = true;
+      continue;
+    }
+
+    if (arg === "--allow-delete-any-existing") {
+      options.allowDeleteAnyExisting = true;
       continue;
     }
 
@@ -1316,6 +1565,20 @@ function parseCliArgs(args) {
       continue;
     }
 
+    if (arg.startsWith("--preset=")) {
+      options.preset = arg.slice("--preset=".length);
+      continue;
+    }
+
+    if (arg === "--preset") {
+      const next = args[index + 1];
+      if (next) {
+        options.preset = next;
+        index += 1;
+      }
+      continue;
+    }
+
     if (arg === "--mode") {
       const next = args[index + 1];
       if (next) {
@@ -1337,6 +1600,207 @@ function parseCliArgs(args) {
   return options;
 }
 
+const VALID_INSTALLER_MODES = new Set(["auto", "manual", "update"]);
+const VALID_DATABASE_CONNECTIONS = new Set(["sqlite", "mysql", "pgsql"]);
+const VALID_TEST_SUITES = new Set(["pest", "phpunit"]);
+const ROOT_CONFIG_KEYS = new Set([
+  "mode",
+  "projectName",
+  "appName",
+  "projectPath",
+  "preset",
+  "allowDeleteExisting",
+  "allowDeleteAnyExisting",
+  "backup",
+  "adminGenerate",
+  "continueOnHealthCheckFailure",
+  "printPlan",
+  "skipBoostInstall",
+  "startServer",
+  "nonInteractive",
+  "verbose",
+  "debug",
+  "database",
+  "laravelFlags",
+  "laravelNewFlags",
+  "optionalPackageIds",
+  "customNormalPackages",
+  "customDevPackages",
+  "normalPackages",
+  "devPackages",
+  "createAdmin",
+  "gitInit",
+  "admin",
+  "testSuite",
+  "auto",
+  "manual",
+  "update",
+]);
+const MODE_OVERRIDE_KEYS = new Set(
+  [...ROOT_CONFIG_KEYS].filter((key) => !["auto", "manual", "update", "mode"].includes(key)),
+);
+
+function validateBooleanConfig(value, label) {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean.`);
+  }
+}
+
+function validateStringConfig(value, label) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string.`);
+  }
+}
+
+function validateStringArrayConfig(value, label) {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${label} must be an array of strings.`);
+  }
+}
+
+function validatePlainObjectConfig(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+}
+
+function validateInstallerConfig(config, label = "config", allowModeOverrides = true) {
+  validatePlainObjectConfig(config, label);
+
+  const allowedKeys = allowModeOverrides ? ROOT_CONFIG_KEYS : MODE_OVERRIDE_KEYS;
+  for (const key of Object.keys(config)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`Unknown configuration key: ${label}.${key}`);
+    }
+  }
+
+  const booleanKeys = [
+    "allowDeleteExisting",
+    "allowDeleteAnyExisting",
+    "backup",
+    "adminGenerate",
+    "continueOnHealthCheckFailure",
+    "printPlan",
+    "skipBoostInstall",
+    "startServer",
+    "nonInteractive",
+    "verbose",
+    "debug",
+    "createAdmin",
+    "gitInit",
+  ];
+  booleanKeys.forEach((key) => {
+    if (config[key] !== undefined) {
+      validateBooleanConfig(config[key], `${label}.${key}`);
+    }
+  });
+
+  const stringKeys = ["projectName", "appName", "projectPath"];
+  stringKeys.forEach((key) => {
+    if (config[key] !== undefined) {
+      validateStringConfig(config[key], `${label}.${key}`);
+    }
+  });
+
+  const arrayKeys = [
+    "laravelFlags",
+    "laravelNewFlags",
+    "optionalPackageIds",
+    "customNormalPackages",
+    "customDevPackages",
+    "normalPackages",
+    "devPackages",
+  ];
+  arrayKeys.forEach((key) => {
+    if (config[key] !== undefined) {
+      validateStringArrayConfig(config[key], `${label}.${key}`);
+    }
+  });
+
+  if (config.mode !== undefined) {
+    validateStringConfig(config.mode, `${label}.mode`);
+    const normalizedMode = config.mode.trim().toLowerCase();
+    if (!VALID_INSTALLER_MODES.has(normalizedMode)) {
+      throw new Error(`${label}.mode must be auto, manual, or update.`);
+    }
+    config.mode = normalizedMode;
+  }
+
+  if (config.preset !== undefined) {
+    validateStringConfig(config.preset, `${label}.preset`);
+    const normalizedPreset = config.preset.trim().toLowerCase();
+    if (!PACKAGE_PRESETS.some((preset) => preset.id === normalizedPreset)) {
+      throw new Error(`${label}.preset must be minimal, standard, or full.`);
+    }
+    config.preset = normalizedPreset;
+  }
+
+  if (config.testSuite !== undefined) {
+    validateStringConfig(config.testSuite, `${label}.testSuite`);
+    const normalizedTestSuite = config.testSuite.trim().toLowerCase();
+    if (!VALID_TEST_SUITES.has(normalizedTestSuite)) {
+      throw new Error(`${label}.testSuite must be pest or phpunit.`);
+    }
+    config.testSuite = normalizedTestSuite;
+  }
+
+  if (config.database !== undefined) {
+    validatePlainObjectConfig(config.database, `${label}.database`);
+    const allowedDatabaseKeys = new Set([
+      "connection",
+      "host",
+      "port",
+      "database",
+      "username",
+      "password",
+    ]);
+    for (const key of Object.keys(config.database)) {
+      if (!allowedDatabaseKeys.has(key)) {
+        throw new Error(`Unknown configuration key: ${label}.database.${key}`);
+      }
+    }
+
+    if (config.database.connection !== undefined) {
+      validateStringConfig(config.database.connection, `${label}.database.connection`);
+      const normalizedConnection = config.database.connection.trim().toLowerCase();
+      if (!VALID_DATABASE_CONNECTIONS.has(normalizedConnection)) {
+        throw new Error(`${label}.database.connection must be sqlite, mysql, or pgsql.`);
+      }
+      config.database.connection = normalizedConnection;
+    }
+
+    ["host", "port", "database", "username", "password"].forEach((key) => {
+      if (config.database[key] !== undefined) {
+        validateStringConfig(config.database[key], `${label}.database.${key}`);
+      }
+    });
+  }
+
+  if (config.admin !== undefined) {
+    validatePlainObjectConfig(config.admin, `${label}.admin`);
+    const allowedAdminKeys = new Set(["name", "email", "password"]);
+    for (const key of Object.keys(config.admin)) {
+      if (!allowedAdminKeys.has(key)) {
+        throw new Error(`Unknown configuration key: ${label}.admin.${key}`);
+      }
+    }
+
+    ["name", "email", "password"].forEach((key) => {
+      if (config.admin[key] !== undefined) {
+        validateStringConfig(config.admin[key], `${label}.admin.${key}`);
+      }
+    });
+  }
+
+  if (allowModeOverrides) {
+    ["auto", "manual", "update"].forEach((mode) => {
+      if (config[mode] !== undefined) {
+        validateInstallerConfig(config[mode], `${label}.${mode}`, false);
+      }
+    });
+  }
+}
+
 // Loads installer JSON config from disk and validates top-level shape.
 function loadInstallerConfig(configPath) {
   const resolvedPath = path.resolve(process.cwd(), configPath);
@@ -1347,9 +1811,9 @@ function loadInstallerConfig(configPath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      warn(`Configuration file is not a JSON object: ${resolvedPath}`);
-      return { path: resolvedPath, config: {} };
+      throw new Error(`Configuration file is not a JSON object: ${resolvedPath}`);
     }
+    validateInstallerConfig(parsed, `config(${resolvedPath})`);
     return { path: resolvedPath, config: parsed };
   } catch (error) {
     throw new Error(`Unable to read configuration file: ${resolvedPath} (${error.message})`);
@@ -1359,12 +1823,30 @@ function loadInstallerConfig(configPath) {
 // Resolves runtime settings by merging CLI options with JSON config values.
 function resolveRuntime(cliOptions, fileConfig, configPath) {
   const resolvedMode = (cliOptions.mode || fileConfig?.mode || "").toLowerCase() || null;
+  const requestedPreset = cliOptions.preset || fileConfig?.preset || "standard";
+  const resolvedPreset = resolvePackagePresetName(requestedPreset);
+  const nonInteractive = Boolean(cliOptions.nonInteractive || fileConfig?.nonInteractive === true);
+
   return {
-    nonInteractive: Boolean(cliOptions.nonInteractive || fileConfig?.nonInteractive === true),
+    nonInteractive,
+    printPlan: Boolean(cliOptions.printPlan || fileConfig?.printPlan === true),
+    preset: resolvedPreset,
+    continueOnHealthCheckFailure: Boolean(
+      cliOptions.continueOnHealthCheckFailure ||
+        fileConfig?.continueOnHealthCheckFailure === true,
+    ),
     backup: Boolean(cliOptions.backup || fileConfig?.backup === true),
     adminGenerate: Boolean(cliOptions.adminGenerate || fileConfig?.adminGenerate === true),
     allowDeleteExisting: Boolean(
       cliOptions.allowDeleteExisting || fileConfig?.allowDeleteExisting === true,
+    ),
+    allowDeleteAnyExisting: Boolean(
+      cliOptions.allowDeleteAnyExisting || fileConfig?.allowDeleteAnyExisting === true,
+    ),
+    skipBoostInstall: Boolean(
+      cliOptions.skipBoostInstall ||
+        fileConfig?.skipBoostInstall === true ||
+        nonInteractive,
     ),
     startServer: Boolean(cliOptions.startServer || fileConfig?.startServer === true),
     mode: ["auto", "manual", "update"].includes(resolvedMode) ? resolvedMode : null,
@@ -1384,6 +1866,56 @@ function getModePreset(mode) {
       : {};
 
   return { ...rootConfig, ...modeConfig };
+}
+
+function resolvePackagePresetName(value) {
+  const requested = String(value || "standard").toLowerCase();
+  const validPresets = PACKAGE_PRESETS.map((preset) => preset.id);
+
+  if (validPresets.includes(requested)) {
+    return requested;
+  }
+
+  warn(`Invalid package preset: ${value}. Falling back to standard.`);
+  return "standard";
+}
+
+function getPackagePresetById(presetId) {
+  return PACKAGE_PRESETS.find((preset) => preset.id === presetId) || PACKAGE_PRESETS[1];
+}
+
+function formatPackagePresetLabel(preset) {
+  return `${preset.title} - ${preset.description}`;
+}
+
+function formatPackageChoiceLabel(choice) {
+  return `${choice.title} [${choice.category}] - ${choice.summary}`;
+}
+
+function collectPackageSpecsFromChoiceIds(choiceIds = []) {
+  const normal = [];
+  const dev = [];
+
+  choiceIds.forEach((choiceId) => {
+    const choice = OPTIONAL_PACKAGE_CHOICES.find((item) => item.id === choiceId);
+    if (!choice) {
+      warn(`Unknown optional package id in preset/config: ${choiceId}`);
+      return;
+    }
+
+    if (choice.normal) {
+      normal.push(...choice.normal);
+    }
+
+    if (choice.dev) {
+      dev.push(...choice.dev);
+    }
+  });
+
+  return {
+    normal,
+    dev,
+  };
 }
 
 // Creates a random alphanumeric password used for generated admin credentials.
@@ -1415,6 +1947,68 @@ async function ask(question, defaultValue = "") {
   } finally {
     rl.close();
   }
+}
+
+// Prompts for a sensitive value and never echoes or logs the plaintext secret.
+async function askSecret(question, defaultValue = "") {
+  if (state.runtime.nonInteractive) {
+    info(`[non-interactive] ${question}: ${(defaultValue ?? "") === "" ? "(empty)" : "(hidden)"}`);
+    return String(defaultValue ?? "");
+  }
+
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
+    warn(`Secret prompt fallback is visible for: ${question}`);
+    return ask(question, defaultValue);
+  }
+
+  return new Promise((resolve, reject) => {
+    const buffer = [];
+    const suffix = defaultValue ? color(" [hidden default]", C.dim) : "";
+    process.stdout.write(`${color("?", C.cyan)} ${question}${suffix}: `);
+
+    const onKeypress = (str, key) => {
+      if (!key) {
+        return;
+      }
+
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new Error("Cancelled by user."));
+        return;
+      }
+
+      if (key.name === "return" || key.name === "enter") {
+        cleanup();
+        process.stdout.write("\n");
+        resolve(buffer.length > 0 ? buffer.join("") : String(defaultValue ?? ""));
+        return;
+      }
+
+      if (key.name === "backspace") {
+        if (buffer.length > 0) {
+          buffer.pop();
+          process.stdout.write("\b \b");
+        }
+        return;
+      }
+
+      if (typeof str === "string" && str.length > 0 && !key.ctrl && !key.meta) {
+        buffer.push(str);
+        process.stdout.write("*");
+      }
+    };
+
+    const cleanup = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    };
+
+    readlineCore.emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+  });
 }
 
 // Prompts until a non-empty value is provided.
@@ -1800,10 +2394,28 @@ function runProcess(command, args, options = {}) {
   });
 }
 
+function redactText(text, redactedValues = []) {
+  return redactedValues
+    .filter((value) => value !== undefined && value !== null && String(value).length > 0)
+    .reduce((output, value) => output.split(String(value)).join("[REDACTED]"), String(text));
+}
+
+function formatCommandForDisplay(command, args, redactedValues = []) {
+  return redactText(`${command} ${args.join(" ")}`.trim(), redactedValues);
+}
+
 // Executes a command with standard installer logging and optional failure behavior.
 async function runCommand(command, args, options = {}) {
-  const { cwd = process.cwd(), required = true, warnOnFailure = true } = options;
-  const cmdStr = `${command} ${args.join(" ")}`.trim();
+  const {
+    cwd = process.cwd(),
+    required = true,
+    warnOnFailure = true,
+    env = process.env,
+    stdio = "inherit",
+    redactedValues = [],
+    successLabel = null,
+  } = options;
+  const cmdStr = formatCommandForDisplay(command, args, redactedValues);
 
   // Use verbose() if verbose or debug is enabled
   if (state.runtime.verbose || state.runtime.debug) {
@@ -1813,8 +2425,8 @@ async function runCommand(command, args, options = {}) {
   }
 
   try {
-    await runProcess(command, args, { cwd });
-    ok(`${command} ${args[0] ?? ""}`.trim());
+    await runProcess(command, args, { cwd, env, stdio });
+    ok(successLabel || `${command} ${args[0] ?? ""}`.trim());
     return { exitCode: 0, success: true };
   } catch (error) {
     const exitCode = error.exitCode || 1;
@@ -1885,6 +2497,94 @@ function directoryIsEmpty(directory) {
     return true;
   }
   return fs.readdirSync(directory).length === 0;
+}
+
+function isGitRepository(directory) {
+  return fs.existsSync(path.join(directory, ".git"));
+}
+
+function classifyExistingPath(targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    return "missing";
+  }
+
+  try {
+    const stats = fs.lstatSync(targetPath);
+    if (!stats.isDirectory()) {
+      return "generic-nonempty";
+    }
+  } catch {
+    return "generic-nonempty";
+  }
+
+  if (directoryIsEmpty(targetPath)) {
+    return "empty";
+  }
+
+  if (isLaravelProject(targetPath)) {
+    return "laravel-project";
+  }
+
+  if (isGitRepository(targetPath)) {
+    return "git-repo";
+  }
+
+  return "generic-nonempty";
+}
+
+function describePathClassification(classification) {
+  switch (classification) {
+    case "missing":
+      return "missing";
+    case "empty":
+      return "empty directory";
+    case "laravel-project":
+      return "Laravel project";
+    case "git-repo":
+      return "Git-managed directory";
+    default:
+      return "generic non-empty path";
+  }
+}
+
+function canDeleteExistingPathNonInteractive(classification, runtimeOptions = state.runtime) {
+  if (classification === "missing") {
+    return true;
+  }
+
+  if (classification === "empty" || classification === "laravel-project") {
+    return Boolean(runtimeOptions.allowDeleteExisting || runtimeOptions.allowDeleteAnyExisting);
+  }
+
+  return Boolean(runtimeOptions.allowDeleteAnyExisting);
+}
+
+function getProtectedPathReason(targetPath) {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedCwd = path.resolve(process.cwd());
+  const rootPath = path.parse(resolvedTarget).root;
+  const homeDirectory = path.resolve(os.homedir());
+
+  if (resolvedTarget === rootPath) {
+    return "target path must not be the root directory.";
+  }
+
+  if (resolvedTarget === resolvedCwd) {
+    return "target path is the current working directory.";
+  }
+
+  if (resolvedTarget === homeDirectory) {
+    return "target path must not be the home directory.";
+  }
+
+  return null;
+}
+
+function ensureSafeProjectTarget(targetPath) {
+  const protectedPathReason = getProtectedPathReason(targetPath);
+  if (protectedPathReason) {
+    throw new Error(`Safety abort: ${protectedPathReason}`);
+  }
 }
 
 // Builds a compact timestamp used for backup path suffixes.
@@ -1983,6 +2683,48 @@ function applyEnvConfig(projectDir, config) {
   fs.writeFileSync(envPath, env, "utf8");
 }
 
+function parseImportedClasses(source) {
+  const imports = new Map();
+  const pattern = /^use\s+([^;]+?)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gm;
+  let match = null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const importedClass = match[1].trim();
+    const alias = match[2]?.trim() || importedClass.split("\\").pop();
+    imports.set(alias, importedClass);
+  }
+
+  return imports;
+}
+
+function resolveAuthUserModel(projectDir) {
+  const authConfigPath = path.join(projectDir, "config", "auth.php");
+  if (!fs.existsSync(authConfigPath)) {
+    return "App\\Models\\User";
+  }
+
+  const authConfig = fs.readFileSync(authConfigPath, "utf8");
+  const importedClasses = parseImportedClasses(authConfig);
+  const patterns = [
+    /'model'\s*=>\s*env\(\s*'AUTH_MODEL'\s*,\s*([A-Za-z0-9_\\]+)::class\s*\)/,
+    /'model'\s*=>\s*([A-Za-z0-9_\\]+)::class/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = authConfig.match(pattern);
+    if (match) {
+      const modelClass = match[1].trim();
+      if (modelClass.includes("\\")) {
+        return modelClass;
+      }
+
+      return importedClasses.get(modelClass) || `App\\Models\\${modelClass}`;
+    }
+  }
+
+  return "App\\Models\\User";
+}
+
 // Reads package names from require and require-dev sections of composer.json.
 function readComposerPackages(projectDir) {
   const composerPath = path.join(projectDir, "composer.json");
@@ -2065,6 +2807,17 @@ async function collectAutoConfig(preset = {}) {
   const appName = await askRequired("Project name", appNameDefault);
   const slug = slugify(appName) || "laravel-filament-app";
   const projectPath = path.resolve(process.cwd(), preset.projectPath || slug);
+  const presetOptions = PACKAGE_PRESETS.map((item) => formatPackagePresetLabel(item));
+  const defaultPresetIndex = PACKAGE_PRESETS.findIndex(
+    (item) => item.id === resolvePackagePresetName(preset.preset || state.runtime.preset),
+  );
+  const selectedPresetIndex = await askChoice(
+    "Choose package preset",
+    presetOptions,
+    defaultPresetIndex >= 0 ? defaultPresetIndex : 1,
+  );
+  const selectedPreset = PACKAGE_PRESETS[selectedPresetIndex];
+  const presetPackages = collectPackageSpecsFromChoiceIds(selectedPreset.optionalPackageIds);
 
   const databaseConnection = ["sqlite", "mysql", "pgsql"].includes(preset?.database?.connection)
     ? preset.database.connection
@@ -2090,34 +2843,26 @@ async function collectAutoConfig(preset = {}) {
   );
 
   const createAdmin = preset.createAdmin !== undefined ? Boolean(preset.createAdmin) : true;
-  const adminPassword =
-    createAdmin && state.runtime.adminGenerate && !preset?.admin?.password
-      ? generateAdminPassword(20)
-      : preset?.admin?.password || "password";
-
-  if (createAdmin && state.runtime.adminGenerate) {
-    info("Admin password will be generated automatically (--admin-generate).");
-  }
+  const admin = resolveAdminCredentials(preset, createAdmin);
 
   return {
     mode: "auto",
+    presetId: selectedPreset.id,
     appName,
     projectPath,
     database,
     laravelNewFlags,
     normalPackages: mergePackageSpecs([
       "filament/filament:^5.0",
-      "laravel/fortify",
-      "laravel/ai",
+      ...presetPackages.normal,
       ...(Array.isArray(preset.normalPackages) ? preset.normalPackages : []),
     ]),
-    devPackages: mergePackageSpecs(Array.isArray(preset.devPackages) ? preset.devPackages : []),
+    devPackages: mergePackageSpecs([
+      ...presetPackages.dev,
+      ...(Array.isArray(preset.devPackages) ? preset.devPackages : []),
+    ]),
     createAdmin,
-    admin: {
-      name: preset?.admin?.name || "Admin",
-      email: preset?.admin?.email || "admin@example.com",
-      password: adminPassword,
-    },
+    admin,
     gitInit: Boolean(preset.gitInit),
   };
 }
@@ -2131,6 +2876,16 @@ async function collectManualConfig(preset = {}) {
   const defaultDir = `./${slugify(appName) || "laravel-filament-app"}`;
   const defaultProjectPath = preset.projectPath || defaultDir;
   const projectPath = path.resolve(process.cwd(), await askRequired("Project directory", defaultProjectPath));
+  const presetOptions = PACKAGE_PRESETS.map((item) => formatPackagePresetLabel(item));
+  const defaultPresetIndex = PACKAGE_PRESETS.findIndex(
+    (item) => item.id === resolvePackagePresetName(preset.preset || state.runtime.preset),
+  );
+  const selectedPresetIndex = await askChoice(
+    "Choose package preset",
+    presetOptions,
+    defaultPresetIndex >= 0 ? defaultPresetIndex : 1,
+  );
+  const selectedPreset = PACKAGE_PRESETS[selectedPresetIndex];
 
   const defaultDbChoice =
     preset?.database?.connection === "mysql"
@@ -2153,7 +2908,7 @@ async function collectManualConfig(preset = {}) {
       port: await ask("DB Port", preset?.database?.port || "3306"),
       database: await askRequired("DB Name", preset?.database?.database || "app"),
       username: await askRequired("DB User", preset?.database?.username || "root"),
-      password: await ask("DB Password", preset?.database?.password || ""),
+      password: await askSecret("DB Password", preset?.database?.password || ""),
     };
   }
   if (dbChoice === 2) {
@@ -2163,7 +2918,7 @@ async function collectManualConfig(preset = {}) {
       port: await ask("DB Port", preset?.database?.port || "5432"),
       database: await askRequired("DB Name", preset?.database?.database || "app"),
       username: await askRequired("DB User", preset?.database?.username || "postgres"),
-      password: await ask("DB Password", preset?.database?.password || ""),
+      password: await askSecret("DB Password", preset?.database?.password || ""),
     };
   }
 
@@ -2194,8 +2949,11 @@ async function collectManualConfig(preset = {}) {
   const testSuiteFlag = testSuiteChoice === 1 ? "--phpunit" : "--pest";
   const laravelNewFlags = [...selectedStartupFlags, testSuiteFlag];
 
-  const optionalLabels = OPTIONAL_PACKAGE_CHOICES.map((choice) => choice.title);
-  const defaultOptionalIndexes = getOptionIndexesByIds(preset.optionalPackageIds, [0, 1]);
+  const optionalLabels = OPTIONAL_PACKAGE_CHOICES.map((choice) => formatPackageChoiceLabel(choice));
+  const defaultOptionalIndexes = getOptionIndexesByIds(
+    preset.optionalPackageIds,
+    getOptionIndexesByIds(selectedPreset.optionalPackageIds),
+  );
   const selected = await askMultiChoiceWithAll(
     "Choose optional packages (Filament + Boost are always active)",
     optionalLabels,
@@ -2232,19 +2990,7 @@ async function collectManualConfig(preset = {}) {
   const defaultCreateAdmin =
     preset.createAdmin !== undefined ? Boolean(preset.createAdmin) : true;
   const createAdmin = await askYesNo("Create Filament admin user", defaultCreateAdmin);
-
-  const adminPassword =
-    createAdmin && state.runtime.adminGenerate && !preset?.admin?.password
-      ? generateAdminPassword(20)
-      : preset?.admin?.password || "password";
-
-  if (createAdmin) {
-    if (state.runtime.adminGenerate) {
-      info("Admin password will be generated automatically (--admin-generate).");
-    } else {
-      info("Default admin will be used: admin@example.com / password");
-    }
-  }
+  const admin = resolveAdminCredentials(preset, createAdmin);
 
   const gitInit = await askYesNo(
     "Run git init",
@@ -2253,6 +2999,7 @@ async function collectManualConfig(preset = {}) {
 
   return {
     mode: "manual",
+    presetId: selectedPreset.id,
     appName,
     projectPath,
     database,
@@ -2260,12 +3007,52 @@ async function collectManualConfig(preset = {}) {
     normalPackages: mergePackageSpecs([...normalPackages, ...customNormal]),
     devPackages: mergePackageSpecs([...devPackages, ...customDev]),
     createAdmin,
-    admin: {
-      name: preset?.admin?.name || "Admin",
-      email: preset?.admin?.email || "admin@example.com",
-      password: adminPassword,
-    },
+    admin,
     gitInit,
+  };
+}
+
+function resolveAdminCredentials(preset = {}, createAdmin = true) {
+  const configuredPassword =
+    typeof preset?.admin?.password === "string" ? preset.admin.password : "";
+  const admin = {
+    name: preset?.admin?.name || "Admin",
+    email: preset?.admin?.email || "admin@example.com",
+    password: "",
+    passwordSource: "none",
+    revealPassword: false,
+  };
+
+  if (!createAdmin) {
+    return admin;
+  }
+
+  if (configuredPassword) {
+    info("Admin password will be loaded from configuration.");
+    return {
+      ...admin,
+      password: configuredPassword,
+      passwordSource: "config",
+      revealPassword: false,
+    };
+  }
+
+  if (state.runtime.adminGenerate) {
+    info("Admin password will be generated automatically (--admin-generate).");
+    return {
+      ...admin,
+      password: generateAdminPassword(20),
+      passwordSource: "generated",
+      revealPassword: true,
+    };
+  }
+
+  warn("Using the default admin password. Prefer --admin-generate or admin.password in config.");
+  return {
+    ...admin,
+    password: "password",
+    passwordSource: "default",
+    revealPassword: false,
   };
 }
 
@@ -2280,6 +3067,123 @@ function packageSetFromConfig(config) {
   }
 
   return names;
+}
+
+function formatList(items) {
+  return Array.isArray(items) && items.length > 0 ? items.join(", ") : "-";
+}
+
+function configUsesSensitiveValues(config) {
+  return Boolean(
+    (config.database &&
+      typeof config.database.password === "string" &&
+      config.database.password.length > 0) ||
+      (config.admin &&
+        config.admin.passwordSource === "config" &&
+        typeof config.admin.password === "string" &&
+        config.admin.password.length > 0),
+  );
+}
+
+function describeAdminPasswordStrategy(config) {
+  if (!config.createAdmin) {
+    return "not created";
+  }
+
+  switch (config.admin?.passwordSource) {
+    case "generated":
+      return "generated";
+    case "config":
+      return "provided via config (hidden)";
+    case "default":
+      return "default password (hidden)";
+    default:
+      return "hidden";
+  }
+}
+
+function describeExistingPathStrategy(targetPath, runtimeOptions = state.runtime) {
+  const classification = classifyExistingPath(targetPath);
+  if (classification === "missing") {
+    return "Create new directory";
+  }
+
+  if (runtimeOptions.nonInteractive) {
+    if (!canDeleteExistingPathNonInteractive(classification, runtimeOptions)) {
+      if (classification === "git-repo" || classification === "generic-nonempty") {
+        return "Abort unless --allow-delete-any-existing is set";
+      }
+
+      return "Abort unless --allow-delete-existing is set";
+    }
+
+    return runtimeOptions.backup
+      ? "Replace existing path after backup"
+      : "Replace existing path";
+  }
+
+  if (classification === "git-repo" || classification === "generic-nonempty") {
+    return "Prompt before replacing a risky existing path";
+  }
+
+  return classification === "empty"
+    ? "Prompt before reusing the empty directory"
+    : "Prompt before replacing the existing Laravel project";
+}
+
+function printInstallPlan(config, runtimeOptions = state.runtime) {
+  const packageSet = packageSetFromConfig(config);
+  const preset = getPackagePresetById(config.presetId || runtimeOptions.preset);
+  const pathClassification = classifyExistingPath(config.projectPath);
+
+  section("Installation Plan");
+  info(`Mode: ${config.mode}`);
+  info(`Preset: ${preset.title}`);
+  info(`Project: ${config.appName}`);
+  info(`Path: ${config.projectPath}`);
+  info(`Path type: ${describePathClassification(pathClassification)}`);
+  info(`Path strategy: ${describeExistingPathStrategy(config.projectPath, runtimeOptions)}`);
+  info(`Database: ${config.database.connection}`);
+  info(`Laravel flags: ${formatList(config.laravelNewFlags)}`);
+  info(`Normal packages: ${formatList(config.normalPackages)}`);
+  info(`Dev packages: ${formatList(config.devPackages)}`);
+  info(`Create admin: ${config.createAdmin ? "yes" : "no"}`);
+  info(`Admin password: ${describeAdminPasswordStrategy(config)}`);
+  info(`Configured secrets: ${configUsesSensitiveValues(config) ? "yes" : "no"}`);
+  info(`Git init: ${config.gitInit ? "yes" : "no"}`);
+  info(`Boost install: ${runtimeOptions.skipBoostInstall ? "skip" : "run interactively"}`);
+  info(
+    `Health-check failure override: ${
+      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort"
+    }`,
+  );
+
+  if (runtimeOptions.printPlan) {
+    ok("Plan preview only. No project files will be modified.");
+  } else if (runtimeOptions.nonInteractive) {
+    info("[non-interactive] Installation will start automatically.");
+  }
+
+  return packageSet;
+}
+
+function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
+  section("Update Plan");
+  info(`Project: ${projectDir}`);
+  info(`Path type: ${describePathClassification(classifyExistingPath(projectDir))}`);
+  info(`Detected packages: ${formatList([...packages].sort())}`);
+  info(`Boost install: ${runtimeOptions.skipBoostInstall ? "skip" : "run interactively"}`);
+  info(
+    `Health-check failure override: ${
+      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort"
+    }`,
+  );
+
+  if (runtimeOptions.printPlan) {
+    ok("Plan preview only. No project files will be modified.");
+  } else if (runtimeOptions.nonInteractive) {
+    info("[non-interactive] Update will start automatically.");
+  }
 }
 
 // Extracts an object property block (e.g. server: { ... }) from source text.
@@ -2732,6 +3636,90 @@ function printNwidartSetupSummary(projectDir, packages) {
   warn(`Nwidart setup incomplete: ${missing.join(", ")}`);
 }
 
+function buildFilamentAdminBootstrapScript() {
+  return [
+    "<?php",
+    "declare(strict_types=1);",
+    "",
+    "use Illuminate\\Contracts\\Console\\Kernel;",
+    "use Illuminate\\Support\\Facades\\Hash;",
+    "use Illuminate\\Support\\Facades\\Schema;",
+    "",
+    "require getcwd() . '/vendor/autoload.php';",
+    "$app = require getcwd() . '/bootstrap/app.php';",
+    "$kernel = $app->make(Kernel::class);",
+    "$kernel->bootstrap();",
+    "",
+    "$modelClass = getenv('INSTALAR_ADMIN_MODEL') ?: 'App\\\\Models\\\\User';",
+    "$name = getenv('INSTALAR_ADMIN_NAME') ?: '';",
+    "$email = getenv('INSTALAR_ADMIN_EMAIL') ?: '';",
+    "$password = getenv('INSTALAR_ADMIN_PASSWORD') ?: '';",
+    "",
+    "if (!class_exists($modelClass)) {",
+    "    fwrite(STDERR, \"Admin model not found: {$modelClass}\\n\");",
+    "    exit(1);",
+    "}",
+    "",
+    "$model = new $modelClass();",
+    "$attributes = [",
+    "    'name' => $name,",
+    "    'email' => $email,",
+    "    'password' => Hash::make($password),",
+    "];",
+    "",
+    "if (method_exists($model, 'getTable') && Schema::hasColumn($model->getTable(), 'email_verified_at')) {",
+    "    $attributes['email_verified_at'] = date('Y-m-d H:i:s');",
+    "}",
+    "",
+    "$user = $modelClass::query()->firstOrNew(['email' => $email]);",
+    "$user->forceFill($attributes);",
+    "$user->save();",
+    "",
+    "fwrite(STDOUT, \"Filament admin user ready.\\n\");",
+    "",
+  ].join("\n");
+}
+
+async function createFilamentAdminUser(projectDir, config) {
+  const tempRunnerPath = path.join(
+    os.tmpdir(),
+    `instalar-filament-admin-${crypto.randomUUID()}.php`,
+  );
+  const adminModel = resolveAuthUserModel(projectDir);
+
+  fs.writeFileSync(tempRunnerPath, buildFilamentAdminBootstrapScript(), "utf8");
+
+  try {
+    const result = await runCommand("php", [tempRunnerPath], {
+      cwd: projectDir,
+      required: false,
+      env: {
+        ...process.env,
+        INSTALAR_ADMIN_MODEL: adminModel,
+        INSTALAR_ADMIN_NAME: config.admin.name,
+        INSTALAR_ADMIN_EMAIL: config.admin.email,
+        INSTALAR_ADMIN_PASSWORD: config.admin.password,
+      },
+      redactedValues: [config.admin.password],
+      successLabel: "Filament admin user ready",
+    });
+
+    if (result.success) {
+      state.createdAdmin = {
+        name: config.admin.name,
+        email: config.admin.email,
+        password: config.admin.revealPassword ? config.admin.password : null,
+        passwordSource: config.admin.passwordSource,
+        revealPassword: Boolean(config.admin.revealPassword),
+      };
+    }
+
+    return result.success;
+  } finally {
+    fs.rmSync(tempRunnerPath, { force: true });
+  }
+}
+
 // Runs package-specific setup commands, migrations, and optional admin creation.
 async function runSetupCommands(projectDir, packages, config) {
   section("Setup Commands");
@@ -2888,55 +3876,19 @@ async function runSetupCommands(projectDir, packages, config) {
   });
 
   if (config.createAdmin && packages.has("filament/filament")) {
-    const withPanel = await runCommand(
-      "php",
-      [
-        "artisan",
-        "make:filament-user",
-        `--name=${config.admin.name}`,
-        `--email=${config.admin.email}`,
-        `--password=${config.admin.password}`,
-        "--panel=admin",
-        "--no-interaction",
-      ],
-      { cwd: projectDir, required: false },
-    );
-
-    if (withPanel) {
-      state.createdAdmin = { ...config.admin };
-    } else {
-      const withoutPanel = await runCommand(
-        "php",
-        [
-          "artisan",
-          "make:filament-user",
-          `--name=${config.admin.name}`,
-          `--email=${config.admin.email}`,
-          `--password=${config.admin.password}`,
-          "--no-interaction",
-        ],
-        { cwd: projectDir, required: false },
-      );
-
-      if (withoutPanel) {
-        state.createdAdmin = { ...config.admin };
-      }
+    const created = await createFilamentAdminUser(projectDir, config);
+    if (!created) {
+      warn("Could not create the Filament admin user automatically.");
     }
   }
 }
 
 // Runs full installation workflow for new projects.
 async function runInstallFlow(config, runtimeOptions = state.runtime) {
-  section("Installation Plan");
-  info(`Mode: ${config.mode}`);
-  info(`Project: ${config.appName}`);
-  info(`Path: ${config.projectPath}`);
-  info(`Database: ${config.database.connection}`);
-  info(`Normal packages: ${config.normalPackages.join(", ") || "-"}`);
-  info(`Dev packages: ${config.devPackages.join(", ") || "-"}`);
+  const packageSet = printInstallPlan(config, runtimeOptions);
 
-  if (config.mode === "manual") {
-    const proceed = await askYesNo("Start installation", true);
+  if (!runtimeOptions.nonInteractive) {
+    const proceed = await askYesNo("Start installation with this plan", true);
     if (!proceed) {
       throw new Error("Cancelled by user.");
     }
@@ -2945,30 +3897,40 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
   section("Create Project");
 
   const resolvedProjectPath = path.resolve(config.projectPath);
-  const resolvedCwd = path.resolve(process.cwd());
-  const rootPath = path.parse(resolvedProjectPath).root;
-
-  if (resolvedProjectPath === resolvedCwd) {
-    throw new Error("Safety abort: target path is the current working directory.");
-  }
-
-  if (resolvedProjectPath === rootPath) {
-    throw new Error("Safety abort: target path must not be the root directory.");
-  }
+  ensureSafeProjectTarget(resolvedProjectPath);
 
   if (fs.existsSync(config.projectPath)) {
+    const pathClassification = classifyExistingPath(config.projectPath);
     let shouldDelete = false;
 
     if (runtimeOptions.nonInteractive) {
-      shouldDelete = Boolean(runtimeOptions.allowDeleteExisting);
+      shouldDelete = canDeleteExistingPathNonInteractive(pathClassification, runtimeOptions);
+      if (!shouldDelete) {
+        if (pathClassification === "git-repo" || pathClassification === "generic-nonempty") {
+          throw new Error(
+            `Non-interactive replacement blocked for ${describePathClassification(
+              pathClassification,
+            )}. Use --allow-delete-any-existing to continue.`,
+          );
+        }
+
+        throw new Error(
+          `Non-interactive replacement blocked for ${describePathClassification(
+            pathClassification,
+          )}. Use --allow-delete-existing to continue.`,
+        );
+      }
+
       info(
-        `[non-interactive] Existing path ${
-          shouldDelete ? "will be replaced" : "will abort"
-        }: ${config.projectPath}`,
+        `[non-interactive] Existing path (${describePathClassification(
+          pathClassification,
+        )}) will be replaced: ${config.projectPath}`,
       );
     } else {
       shouldDelete = await askYesNo(
-        `Path already exists. Delete everything? (${config.projectPath})`,
+        `Path already exists (${describePathClassification(
+          pathClassification,
+        )}). Delete and recreate it? (${config.projectPath})`,
         false,
       );
     }
@@ -3008,7 +3970,6 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
   applyEnvConfig(config.projectPath, config);
   ok(".env updated");
 
-  const packageSet = packageSetFromConfig(config);
   await ensureComposerPluginAllowList(config.projectPath, packageSet);
 
   section("Composer Dependencies");
@@ -3036,11 +3997,22 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
   await runSetupCommands(config.projectPath, packageSet, config);
   printNwidartSetupSummary(config.projectPath, packageSet);
 
-  section("Install Boost");
-  info("boost:install is interactive. Please confirm settings now.");
-  await runCommand("php", ["artisan", "boost:install"], { cwd: config.projectPath, required: true });
+  state.boostInstallSkipped = false;
+  if (packageSet.has("laravel/boost")) {
+    if (runtimeOptions.skipBoostInstall) {
+      state.boostInstallSkipped = true;
+      warn("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
+    } else {
+      section("Install Boost");
+      info("boost:install is interactive. Please confirm settings now.");
+      await runCommand("php", ["artisan", "boost:install"], {
+        cwd: config.projectPath,
+        required: true,
+      });
+    }
+  }
 
-  section("Optimieren");
+  section("Optimize");
   await runCommand("php", ["artisan", "optimize", "--no-interaction"], {
     cwd: config.projectPath,
     required: false,
@@ -3058,15 +4030,16 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
 
 // Runs update workflow for an existing Laravel project.
 async function runUpdateFlow(projectDir) {
-  section("Update Mode");
-  info(`Project: ${projectDir}`);
+  const packages = readComposerPackages(projectDir);
+  printUpdatePlan(projectDir, packages, state.runtime);
 
-  const proceed = await askYesNo("Start update", true);
-  if (!proceed) {
-    throw new Error("Cancelled by user.");
+  if (!state.runtime.nonInteractive) {
+    const proceed = await askYesNo("Start update with this plan", true);
+    if (!proceed) {
+      throw new Error("Cancelled by user.");
+    }
   }
 
-  const packages = readComposerPackages(projectDir);
   await ensureComposerPluginAllowList(projectDir, packages);
 
   if (await ensureNwidartComposerMergeConfig(projectDir, packages)) {
@@ -3088,14 +4061,20 @@ async function runUpdateFlow(projectDir) {
   });
 
   if (packages.has("laravel/boost")) {
-    section("Install Boost");
-    info("boost:install is interactive.");
-    await runCommand("php", ["artisan", "boost:install"], { cwd: projectDir, required: true });
+    state.boostInstallSkipped = false;
+    if (state.runtime.skipBoostInstall) {
+      state.boostInstallSkipped = true;
+      warn("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
+    } else {
+      section("Install Boost");
+      info("boost:install is interactive.");
+      await runCommand("php", ["artisan", "boost:install"], { cwd: projectDir, required: true });
+    }
   } else {
     warn("laravel/boost is not installed. Skipping boost:install.");
   }
 
-  section("Optimieren");
+  section("Optimize");
   await runCommand("php", ["artisan", "optimize", "--no-interaction"], {
     cwd: projectDir,
     required: false,
@@ -3107,17 +4086,32 @@ async function runUpdateFlow(projectDir) {
 }
 
 // Prints final success output including admin credentials and accumulated warnings.
-function printFinalNotes(projectPath) {
+function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
   section("Done");
   ok("INSTALAR completed successfully.");
   console.log(`\n  ${color("Project path:", C.bold)} ${projectPath}`);
-  console.log(`  ${color("Start:", C.bold)} ${color(`cd ${projectPath} && php artisan serve`, C.cyan)}`);
+  console.log(`  ${color("Next steps:", C.bold)}`);
+  console.log(`  - ${color(`cd ${projectPath}`, C.cyan)}`);
+  console.log(`  - ${color("php artisan serve", C.cyan)}`);
+  if (!runtimeOptions.startServer) {
+    console.log(`  - ${color("composer run dev", C.cyan)}`);
+  }
+  if (state.boostInstallSkipped) {
+    console.log(`  - ${color("php artisan boost:install", C.cyan)}`);
+  }
 
   if (state.createdAdmin) {
     console.log(`\n  ${color("Filament Admin:", C.bold + C.green)}`);
     console.log(`  Name:     ${state.createdAdmin.name}`);
     console.log(`  E-Mail:   ${state.createdAdmin.email}`);
-    console.log(`  Password: ${state.createdAdmin.password}`);
+    if (state.createdAdmin.revealPassword) {
+      console.log(`  Password: ${state.createdAdmin.password}`);
+    } else {
+      console.log("  Password: (hidden)");
+      if (state.createdAdmin.passwordSource === "default") {
+        console.log("  Note:     Rotate the default password immediately.");
+      }
+    }
   }
 
   if (state.warnings.length > 0) {
@@ -3137,150 +4131,210 @@ function checkAccess(targetPath, mode) {
 }
 
 // Runs post-install health checks for key artisan commands and frontend manifest.
-async function runHealthChecks(projectPath) {
+async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
   section("Health Check");
 
-  let healthCheckFailed = false;
-  let failedChecks = [];
-
-  // Check APP_KEY is set
   const envPath = path.join(projectPath, ".env");
-  if (fs.existsSync(envPath)) {
-    const envContent = fs.readFileSync(envPath, "utf8");
-    const appKeyMatch = envContent.match(/^APP_KEY=base64:[A-Za-z0-9+\/=]+$/m);
-    if (appKeyMatch) {
-      ok("APP_KEY is set");
-    } else {
-      warn("APP_KEY is missing - run 'php artisan key:generate'");
-      healthCheckFailed = true;
-      failedChecks.push("APP_KEY");
-    }
-  } else {
-    warn(".env file not found");
-    healthCheckFailed = true;
-    failedChecks.push(".env");
-  }
-
-  // Check database connection
-  const dbCheck = await runCommand("php", ["artisan", "db:show", "--no-interaction"], {
-    cwd: projectPath,
-    required: false,
-    warnOnFailure: false,
-  });
-  if (dbCheck.exitCode !== 0) {
-    warn("Database connection check failed");
-    healthCheckFailed = true;
-    failedChecks.push("Database");
-  }
-
-  // Check storage link
   const storageLinkPath = path.join(projectPath, "public", "storage");
-  let storageLinkOk = false;
-  try {
-    const lstat = fs.lstatSync(storageLinkPath);
-    storageLinkOk = lstat.isSymbolicLink();
-  } catch {
-    storageLinkOk = false;
-  }
-  if (storageLinkOk) {
-    ok("Storage link exists");
-  } else {
-    warn("Storage link missing - attempting to create");
-
-    // Try to create the storage link automatically
-    const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
-      cwd: projectPath,
-      required: false,
-      warnOnFailure: false,
-    });
-
-    if (linkResult.success) {
-      ok("Storage link created successfully");
-      storageLinkOk = true;
-      // Remove from failed checks since we fixed it
-      failedChecks = failedChecks.filter((c) => c !== "Storage link");
-    } else {
-      warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
-      // Only add to failed checks in non-interactive mode if link creation failed
-      if (!state.runtime.nonInteractive) {
-        const retry = await askYesNo("Try again?", false);
-        if (retry) {
-          const retryResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
-            cwd: projectPath,
-            required: false,
-            warnOnFailure: false,
-          });
-          if (retryResult.success) {
-            ok("Storage link created successfully");
-            storageLinkOk = true;
-            failedChecks = failedChecks.filter((c) => c !== "Storage link");
-          } else {
-            healthCheckFailed = true;
-            failedChecks.push("Storage link");
-          }
-        } else {
-          healthCheckFailed = true;
-          failedChecks.push("Storage link");
-        }
-      } else {
-        healthCheckFailed = true;
-        failedChecks.push("Storage link");
+  const manifestPath = path.join(projectPath, "public", "build", "manifest.json");
+  const failedChecks = [];
+  const recordFailure = (...labels) => {
+    for (const label of labels) {
+      if (!failedChecks.includes(label)) {
+        failedChecks.push(label);
       }
     }
-  }
+  };
 
-  // Run composer validate
-  const composerValidate = await runCommand("composer", ["validate", "--no-interaction"], {
-    cwd: projectPath,
-    required: false,
-    warnOnFailure: false,
-  });
-  if (composerValidate.exitCode === 0) {
-    ok("Composer.json is valid");
-  } else {
-    warn("Composer.json validation failed");
-    healthCheckFailed = true;
-    failedChecks.push("Composer");
-  }
+  const healthChecks = [
+    {
+      name: "APP_KEY",
+      run: async () => {
+        if (!fs.existsSync(envPath)) {
+          warn(".env file not found");
+          return [".env"];
+        }
 
-  // Existing checks: about, migrate:status, route:list, Vite manifest
-  const artisanHealthChecks = [
-    { command: "about", label: "Artisan about" },
-    { command: "migrate:status", label: "Migration status" },
-    { command: "route:list", label: "Route list" },
+        const envContent = fs.readFileSync(envPath, "utf8");
+        const appKeyMatch = envContent.match(/^APP_KEY=base64:[A-Za-z0-9+\/=]+$/m);
+        if (appKeyMatch) {
+          ok("APP_KEY is set");
+          return [];
+        }
+
+        warn("APP_KEY is missing - run 'php artisan key:generate'");
+        return ["APP_KEY"];
+      },
+    },
+    {
+      name: "Database",
+      run: async () => {
+        const dbCheck = await runCommand("php", ["artisan", "db:show", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (dbCheck.exitCode === 0) {
+          return [];
+        }
+
+        warn("Database connection check failed");
+        return ["Database"];
+      },
+    },
+    {
+      name: "Storage link",
+      run: async () => {
+        let storageLinkOk = false;
+        try {
+          const lstat = fs.lstatSync(storageLinkPath);
+          storageLinkOk = lstat.isSymbolicLink();
+        } catch {
+          storageLinkOk = false;
+        }
+
+        if (storageLinkOk) {
+          ok("Storage link exists");
+          return [];
+        }
+
+        warn("Storage link missing - attempting to create");
+        const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (linkResult.success) {
+          ok("Storage link created successfully");
+          return [];
+        }
+
+        warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
+        if (runtimeOptions.nonInteractive) {
+          return ["Storage link"];
+        }
+
+        const retry = await askYesNo("Try again?", false);
+        if (!retry) {
+          return ["Storage link"];
+        }
+
+        const retryResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (retryResult.success) {
+          ok("Storage link created successfully");
+          return [];
+        }
+
+        return ["Storage link"];
+      },
+    },
+    {
+      name: "Composer validate",
+      run: async () => {
+        const composerValidate = await runCommand("composer", ["validate", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (composerValidate.exitCode === 0) {
+          ok("Composer.json is valid");
+          return [];
+        }
+
+        warn("Composer.json validation failed");
+        return ["Composer"];
+      },
+    },
+    {
+      name: "Artisan about",
+      run: async () => {
+        const result = await runCommand("php", ["artisan", "about", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (result.exitCode === 0) {
+          return [];
+        }
+
+        warn("Artisan about check failed");
+        return ["php artisan about"];
+      },
+    },
+    {
+      name: "Migration status",
+      run: async () => {
+        const result = await runCommand("php", ["artisan", "migrate:status", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (result.exitCode === 0) {
+          return [];
+        }
+
+        warn("Migration status check failed");
+        return ["php artisan migrate:status"];
+      },
+    },
+    {
+      name: "Route list",
+      run: async () => {
+        const result = await runCommand("php", ["artisan", "route:list", "--no-interaction"], {
+          cwd: projectPath,
+          required: false,
+          warnOnFailure: false,
+        });
+
+        if (result.exitCode === 0) {
+          return [];
+        }
+
+        warn("Route list check failed");
+        return ["php artisan route:list"];
+      },
+    },
+    {
+      name: "Vite manifest",
+      run: async () => {
+        if (fs.existsSync(manifestPath)) {
+          ok("Vite manifest found (public/build/manifest.json)");
+          return [];
+        }
+
+        warn("Vite manifest missing: public/build/manifest.json");
+        return ["Vite manifest"];
+      },
+    },
   ];
 
-  for (const healthCheck of artisanHealthChecks) {
-    const result = await runCommand("php", ["artisan", healthCheck.command, "--no-interaction"], {
-      cwd: projectPath,
-      required: false,
-      warnOnFailure: false,
-    });
-
-    if (result.exitCode !== 0) {
-      warn(`${healthCheck.label} check failed`);
-      healthCheckFailed = true;
-      failedChecks.push(`php artisan ${healthCheck.command}`);
-    }
+  for (const healthCheck of healthChecks) {
+    const failures = await healthCheck.run();
+    recordFailure(...failures);
   }
 
-  const manifestPath = path.join(projectPath, "public", "build", "manifest.json");
-  if (fs.existsSync(manifestPath)) {
-    ok("Vite manifest found (public/build/manifest.json)");
-  } else {
-    warn("Vite manifest missing: public/build/manifest.json");
-    healthCheckFailed = true;
-    failedChecks.push("Vite manifest");
-  }
-
-  // Ask user if they want to continue when health checks failed
-  if (healthCheckFailed) {
+  if (failedChecks.length > 0) {
     console.log("");
     const failedList = failedChecks.join(", ");
     fail(`Health check failed for: ${failedList}`);
     console.log("");
 
-    if (state.runtime.nonInteractive) {
+    if (runtimeOptions.nonInteractive) {
+      if (runtimeOptions.continueOnHealthCheckFailure) {
+        warn("Continuing because health-check override is enabled for non-interactive mode.");
+        return;
+      }
+
       fail("Installation aborted because health checks failed in non-interactive mode.");
       process.exit(1);
     }
@@ -3365,9 +4419,9 @@ async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = sta
 
 // Executes all final post-install steps in order.
 async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
-  printFinalNotes(projectPath);
-  await runHealthChecks(projectPath);
+  await runHealthChecks(projectPath, runtimeOptions);
   await runFinalPermissionAndServerStep(projectPath, runtimeOptions);
+  printFinalNotes(projectPath, runtimeOptions);
 }
 
 // Prints Node-phase usage help.
@@ -3382,10 +4436,17 @@ function printNodeUsage() {
   console.log("Options:");
   console.log("  --config <file>         JSON configuration file (default: ./instalar.json)");
   console.log("  --non-interactive       No prompts, uses defaults/config");
+  console.log("  --print-plan            Collect input and print the resolved plan only");
+  console.log("  --preset <name>         Package preset: minimal, standard, or full");
+  console.log("  --skip-boost-install    Skip interactive boost:install");
+  console.log("  --continue-on-health-check-failure");
+  console.log("                          Continue unattended runs despite failed health checks");
   console.log("  --mode <auto|manual|update>");
   console.log("  --backup                Backup existing target directory before replacing");
   console.log("  --admin-generate        Generate admin password");
   console.log("  --allow-delete-existing Allow replacing in non-interactive mode");
+  console.log("  --allow-delete-any-existing");
+  console.log("                          Also allow replacing generic or git-managed directories");
   console.log("  --start-server          Automatically run composer run dev at the end");
 }
 
@@ -3444,6 +4505,11 @@ async function main() {
       throw new Error("Update mode requires a Laravel project in the current directory.");
     }
 
+    if (state.runtime.printPlan) {
+      printUpdatePlan(cwd, readComposerPackages(cwd), state.runtime);
+      return;
+    }
+
     await runUpdateFlow(cwd);
     await finalizeProject(cwd, state.runtime);
     return;
@@ -3451,6 +4517,10 @@ async function main() {
 
   if (mode === "auto") {
     const config = await collectAutoConfig(getModePreset("auto"));
+    if (state.runtime.printPlan) {
+      printInstallPlan(config, state.runtime);
+      return;
+    }
     await runInstallFlow(config, state.runtime);
     await finalizeProject(config.projectPath, state.runtime);
     return;
@@ -3458,6 +4528,10 @@ async function main() {
 
   if (mode === "manual") {
     const config = await collectManualConfig(getModePreset("manual"));
+    if (state.runtime.printPlan) {
+      printInstallPlan(config, state.runtime);
+      return;
+    }
     await runInstallFlow(config, state.runtime);
     await finalizeProject(config.projectPath, state.runtime);
     return;
@@ -3471,6 +4545,10 @@ async function main() {
     );
 
     if (action === 0) {
+      if (state.runtime.printPlan) {
+        printUpdatePlan(cwd, readComposerPackages(cwd), state.runtime);
+        return;
+      }
       await runUpdateFlow(cwd);
       await finalizeProject(cwd, state.runtime);
       return;
@@ -3478,12 +4556,20 @@ async function main() {
 
     if (action === 1) {
       const config = await collectAutoConfig(getModePreset("auto"));
+      if (state.runtime.printPlan) {
+        printInstallPlan(config, state.runtime);
+        return;
+      }
       await runInstallFlow(config, state.runtime);
       await finalizeProject(config.projectPath, state.runtime);
       return;
     }
 
     const config = await collectManualConfig(getModePreset("manual"));
+    if (state.runtime.printPlan) {
+      printInstallPlan(config, state.runtime);
+      return;
+    }
     await runInstallFlow(config, state.runtime);
     await finalizeProject(config.projectPath, state.runtime);
     return;
@@ -3492,12 +4578,20 @@ async function main() {
   const modeChoice = await askChoice("Choose mode", ["Automatic", "Manual"], 0);
   if (modeChoice === 0) {
     const config = await collectAutoConfig(getModePreset("auto"));
+    if (state.runtime.printPlan) {
+      printInstallPlan(config, state.runtime);
+      return;
+    }
     await runInstallFlow(config, state.runtime);
     await finalizeProject(config.projectPath, state.runtime);
     return;
   }
 
   const config = await collectManualConfig(getModePreset("manual"));
+  if (state.runtime.printPlan) {
+    printInstallPlan(config, state.runtime);
+    return;
+  }
   await runInstallFlow(config, state.runtime);
   await finalizeProject(config.projectPath, state.runtime);
 }

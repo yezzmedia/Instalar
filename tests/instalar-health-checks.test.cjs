@@ -1,110 +1,54 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const vm = require("node:vm");
 
-function extractEmbeddedNodeSource() {
-  const installerPath = path.join(__dirname, "..", "instalar.sh");
-  const installerSource = fs.readFileSync(installerPath, "utf8");
-  const match = installerSource.match(/<<'NODE'\n([\s\S]*?)\nNODE\n/);
+const {
+  createProjectFixture,
+  loadInstallerHarness,
+} = require("./support/instalar-harness.cjs");
 
-  if (!match) {
-    throw new Error("Embedded Node.js source could not be extracted from instalar.sh");
-  }
-
-  return match[1].replace(
-    /\/\/ Global top-level error handler for the Node phase\.[\s\S]*$/,
-    "",
-  );
-}
-
-function loadHealthCheckHarness() {
-  const source = `${extractEmbeddedNodeSource()}
-globalThis.__instalarTest = {
-  state,
-  runHealthChecks,
-  setRunCommand(value) { runCommand = value; },
-  setAskYesNo(value) { askYesNo = value; },
-  setInfo(value) { info = value; },
-  setWarn(value) { warn = value; },
-  setOk(value) { ok = value; },
-  setFail(value) { fail = value; },
-  setSection(value) { section = value; },
-};
-`;
-
-  const fakeProcess = {
-    env: process.env,
-    argv: [],
-    stdin: { isTTY: false },
-    stdout: { isTTY: false, write() {} },
-    stderr: { write() {} },
-    cwd: () => process.cwd(),
-    exitCode: 0,
-    exit(code) {
-      throw new Error(`EXIT:${code}`);
-    },
+function createHealthCheckHarness(runtimeOverrides = {}) {
+  const harness = loadInstallerHarness();
+  const events = {
+    failures: [],
+    infos: [],
+    oks: [],
+    prompts: [],
+    warnings: [],
   };
 
-  const context = {
-    require,
-    console,
-    Buffer,
-    process: fakeProcess,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+  harness.state.runtime = {
+    nonInteractive: false,
+    continueOnHealthCheckFailure: false,
+    ...runtimeOverrides,
   };
-  context.globalThis = context;
+  harness.setSection(() => {});
+  harness.setInfo((message) => {
+    events.infos.push(message);
+  });
+  harness.setWarn((message) => {
+    events.warnings.push(message);
+  });
+  harness.setOk((message) => {
+    events.oks.push(message);
+  });
+  harness.setFail((message) => {
+    events.failures.push(message);
+  });
 
-  vm.runInNewContext(source, context, { filename: "instalar-node.cjs" });
-
-  return context.__instalarTest;
+  return { events, harness };
 }
 
-function createProjectFixture() {
-  const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-health-check-"));
+test("runHealthChecks aborts non-interactive runs when a final artisan check fails", async () => {
+  const { events, harness } = createHealthCheckHarness({ nonInteractive: true });
+  const projectPath = createProjectFixture();
 
-  fs.mkdirSync(path.join(projectPath, "public", "build"), { recursive: true });
-  fs.mkdirSync(path.join(projectPath, "storage", "app", "public"), { recursive: true });
-  fs.writeFileSync(
-    path.join(projectPath, ".env"),
-    "APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
-  );
-  fs.writeFileSync(path.join(projectPath, "public", "build", "manifest.json"), "{}\n");
-  fs.symlinkSync(
-    path.join(projectPath, "storage", "app", "public"),
-    path.join(projectPath, "public", "storage"),
-  );
-
-  return projectPath;
-}
-
-test("runHealthChecks handles failed artisan checks for interactive and non-interactive runs", async () => {
-  const nonInteractiveHarness = loadHealthCheckHarness();
-  const nonInteractiveProjectPath = createProjectFixture();
-  const nonInteractiveFailures = [];
-
-  nonInteractiveHarness.state.runtime = { nonInteractive: true };
-  nonInteractiveHarness.setSection(() => {});
-  nonInteractiveHarness.setInfo(() => {});
-  nonInteractiveHarness.setWarn(() => {});
-  nonInteractiveHarness.setOk(() => {});
-  nonInteractiveHarness.setAskYesNo(async () => {
+  harness.setAskYesNo(async () => {
     throw new Error("askYesNo should not be called in non-interactive mode");
   });
-  nonInteractiveHarness.setFail((message) => {
-    nonInteractiveFailures.push(message);
-  });
-  nonInteractiveHarness.setRunCommand(async (command, args) => {
+  harness.setRunCommand(async (command, args) => {
     if (command === "composer" && args[0] === "validate") {
-      return { exitCode: 0, success: true };
-    }
-
-    if (command === "php" && args[0] === "artisan" && args[1] === "db:show") {
       return { exitCode: 0, success: true };
     }
 
@@ -115,30 +59,24 @@ test("runHealthChecks handles failed artisan checks for interactive and non-inte
     return { exitCode: 0, success: true };
   });
 
-  await assert.rejects(nonInteractiveHarness.runHealthChecks(nonInteractiveProjectPath), /EXIT:1/);
-  assert.deepEqual(nonInteractiveFailures, [
+  await assert.rejects(harness.runHealthChecks(projectPath, harness.state.runtime), /EXIT:1/);
+  assert.deepEqual(events.failures, [
     "Health check failed for: php artisan about",
     "Installation aborted because health checks failed in non-interactive mode.",
   ]);
+});
 
-  const interactiveHarness = loadHealthCheckHarness();
-  const interactiveProjectPath = createProjectFixture();
-  const prompts = [];
-  const interactiveFailures = [];
+test("runHealthChecks can continue a non-interactive run when the override is enabled", async () => {
+  const { events, harness } = createHealthCheckHarness({
+    nonInteractive: true,
+    continueOnHealthCheckFailure: true,
+  });
+  const projectPath = createProjectFixture();
 
-  interactiveHarness.state.runtime = { nonInteractive: false };
-  interactiveHarness.setSection(() => {});
-  interactiveHarness.setInfo(() => {});
-  interactiveHarness.setWarn(() => {});
-  interactiveHarness.setOk(() => {});
-  interactiveHarness.setFail((message) => {
-    interactiveFailures.push(message);
+  harness.setAskYesNo(async () => {
+    throw new Error("askYesNo should not be called when the override is enabled");
   });
-  interactiveHarness.setAskYesNo(async (question, defaultYes) => {
-    prompts.push({ question, defaultYes });
-    return true;
-  });
-  interactiveHarness.setRunCommand(async (command, args) => {
+  harness.setRunCommand(async (command, args) => {
     if (command === "composer" && args[0] === "validate") {
       return { exitCode: 0, success: true };
     }
@@ -150,10 +88,103 @@ test("runHealthChecks handles failed artisan checks for interactive and non-inte
     return { exitCode: 0, success: true };
   });
 
-  await interactiveHarness.runHealthChecks(interactiveProjectPath);
+  await harness.runHealthChecks(projectPath, harness.state.runtime);
 
-  assert.deepEqual(interactiveFailures, ["Health check failed for: php artisan route:list"]);
-  assert.deepEqual(prompts, [
+  assert.deepEqual(events.failures, ["Health check failed for: php artisan route:list"]);
+  assert.deepEqual(events.warnings, [
+    "Route list check failed",
+    "Continuing because health-check override is enabled for non-interactive mode.",
+  ]);
+});
+
+test("runHealthChecks prompts interactively when a final artisan check fails", async () => {
+  const { events, harness } = createHealthCheckHarness();
+  const projectPath = createProjectFixture();
+
+  harness.setAskYesNo(async (question, defaultYes) => {
+    events.prompts.push({ question, defaultYes });
+    return true;
+  });
+  harness.setRunCommand(async (command, args) => {
+    if (command === "composer" && args[0] === "validate") {
+      return { exitCode: 0, success: true };
+    }
+
+    if (command === "php" && args[0] === "artisan" && args[1] === "route:list") {
+      return { exitCode: 1, success: false };
+    }
+
+    return { exitCode: 0, success: true };
+  });
+
+  await harness.runHealthChecks(projectPath, harness.state.runtime);
+
+  assert.deepEqual(events.failures, ["Health check failed for: php artisan route:list"]);
+  assert.deepEqual(events.prompts, [
     { question: "Do you want to continue anyway?", defaultYes: false },
   ]);
+});
+
+test("runHealthChecks succeeds cleanly when all checks pass", async () => {
+  const { events, harness } = createHealthCheckHarness({ nonInteractive: true });
+  const projectPath = createProjectFixture();
+
+  harness.setAskYesNo(async () => {
+    throw new Error("askYesNo should not be called for a clean run");
+  });
+  harness.setRunCommand(async () => ({ exitCode: 0, success: true }));
+
+  await harness.runHealthChecks(projectPath, harness.state.runtime);
+
+  assert.deepEqual(events.failures, []);
+  assert.deepEqual(events.warnings, []);
+  assert.ok(events.oks.includes("APP_KEY is set"));
+  assert.ok(events.oks.includes("Storage link exists"));
+  assert.ok(events.oks.includes("Composer.json is valid"));
+});
+
+test("runHealthChecks retries storage:link interactively before succeeding", async () => {
+  const { events, harness } = createHealthCheckHarness();
+  const projectPath = createProjectFixture();
+  const storageLinkPath = path.join(projectPath, "public", "storage");
+  const calls = [];
+  let storageAttempts = 0;
+
+  fs.unlinkSync(storageLinkPath);
+
+  harness.setAskYesNo(async (question, defaultYes) => {
+    events.prompts.push({ question, defaultYes });
+    return true;
+  });
+  harness.setRunCommand(async (command, args) => {
+    calls.push([command, ...args].join(" "));
+
+    if (command === "composer" && args[0] === "validate") {
+      return { exitCode: 0, success: true };
+    }
+
+    if (command === "php" && args[0] === "artisan" && args[1] === "storage:link") {
+      storageAttempts += 1;
+      if (storageAttempts === 1) {
+        return { exitCode: 1, success: false };
+      }
+
+      fs.symlinkSync(
+        path.join(projectPath, "storage", "app", "public"),
+        storageLinkPath,
+      );
+
+      return { exitCode: 0, success: true };
+    }
+
+    return { exitCode: 0, success: true };
+  });
+
+  await harness.runHealthChecks(projectPath, harness.state.runtime);
+
+  assert.equal(storageAttempts, 2);
+  assert.deepEqual(events.failures, []);
+  assert.deepEqual(events.prompts, [{ question: "Try again?", defaultYes: false }]);
+  assert.ok(calls.includes("php artisan storage:link --no-interaction"));
+  assert.ok(events.oks.includes("Storage link created successfully"));
 });
