@@ -2676,6 +2676,20 @@ function applyEnvConfig(projectDir, config) {
   fs.writeFileSync(envPath, env, "utf8");
 }
 
+function parseImportedClasses(source) {
+  const imports = new Map();
+  const pattern = /^use\s+([^;]+?)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gm;
+  let match = null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const importedClass = match[1].trim();
+    const alias = match[2]?.trim() || importedClass.split("\\").pop();
+    imports.set(alias, importedClass);
+  }
+
+  return imports;
+}
+
 function resolveAuthUserModel(projectDir) {
   const authConfigPath = path.join(projectDir, "config", "auth.php");
   if (!fs.existsSync(authConfigPath)) {
@@ -2683,6 +2697,7 @@ function resolveAuthUserModel(projectDir) {
   }
 
   const authConfig = fs.readFileSync(authConfigPath, "utf8");
+  const importedClasses = parseImportedClasses(authConfig);
   const patterns = [
     /'model'\s*=>\s*env\(\s*'AUTH_MODEL'\s*,\s*([A-Za-z0-9_\\]+)::class\s*\)/,
     /'model'\s*=>\s*([A-Za-z0-9_\\]+)::class/,
@@ -2691,7 +2706,12 @@ function resolveAuthUserModel(projectDir) {
   for (const pattern of patterns) {
     const match = authConfig.match(pattern);
     if (match) {
-      return match[1];
+      const modelClass = match[1].trim();
+      if (modelClass.includes("\\")) {
+        return modelClass;
+      }
+
+      return importedClasses.get(modelClass) || `App\\Models\\${modelClass}`;
     }
   }
 

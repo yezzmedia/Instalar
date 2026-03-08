@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
 
@@ -56,4 +59,32 @@ test("resolveAdminCredentials only reveals generated passwords", () => {
   assert.equal(configured.revealPassword, false);
   assert.equal(fallback.passwordSource, "default");
   assert.equal(fallback.revealPassword, false);
+});
+
+test("resolveAuthUserModel expands imported class aliases from auth config", () => {
+  const harness = loadInstallerHarness();
+  const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-auth-model-"));
+  const configPath = path.join(projectPath, "config");
+
+  fs.mkdirSync(configPath, { recursive: true });
+  fs.writeFileSync(
+    path.join(configPath, "auth.php"),
+    [
+      "<?php",
+      "",
+      "use App\\Models\\User;",
+      "",
+      "return [",
+      "    'providers' => [",
+      "        'users' => [",
+      "            'model' => env('AUTH_MODEL', User::class),",
+      "        ],",
+      "    ],",
+      "];",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  assert.equal(harness.resolveAuthUserModel(projectPath), "App\\Models\\User");
 });

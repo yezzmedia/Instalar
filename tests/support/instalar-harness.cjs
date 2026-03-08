@@ -29,6 +29,7 @@ globalThis.__instalarTest = {
   getPackagePresetById,
   askSecret,
   formatCommandForDisplay,
+  resolveAuthUserModel,
   classifyExistingPath,
   describePathClassification,
   canDeleteExistingPathNonInteractive,

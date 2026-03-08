@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Stop echoing configured or default admin passwords in the final summary
+- Resolve imported auth model aliases correctly when creating the Filament admin user
 - Align README/help/release metadata with the hardened installer behavior
 
 ## [0.1.8] - 2026-03-08 (Rosie)
