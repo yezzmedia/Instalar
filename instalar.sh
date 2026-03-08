@@ -167,7 +167,7 @@ banner() {
 # Prints the command-line help text
 print_usage() {
   cat <<EOF
-INSTALAR v${SCRIPT_VERSION}
+INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})
 
 Usage:
   ./instalar.sh
@@ -650,6 +650,7 @@ detect_composer_update() {
   local latest
 
   current="$(composer --version 2>/dev/null | sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/' || true)"
+  # shellcheck disable=SC2016
   latest="$(composer show composer/composer --all --format=json 2>/dev/null | php -r '
     $data = json_decode(stream_get_contents(STDIN), true);
     if (! is_array($data)) {
@@ -673,6 +674,7 @@ detect_composer_update() {
 # Calls: register_dep_update if an update is available
 detect_laravel_installer_update() {
   local pair
+  # shellcheck disable=SC2016
   pair="$(composer global outdated laravel/installer --direct --format=json 2>/dev/null | php -r '
     $data = json_decode(stream_get_contents(STDIN), true);
     if (! is_array($data)) {
@@ -1113,6 +1115,10 @@ main_bash() {
     set -x
   fi
 
+  if (( BASH_VERBOSE == 1 )); then
+    info "Verbose Bash output enabled."
+  fi
+
   detect_bash_tty
   require_bash_tty_for_interactive
 
@@ -1136,6 +1142,7 @@ main_bash "$@"
 
 # Create temporary file for embedded Node.js code
 NODE_TMP="$(mktemp "${TMPDIR:-/tmp}/instalar-node-XXXXXX.cjs")"
+# shellcheck disable=SC2317
 cleanup_node_tmp() {
   rm -f "${NODE_TMP}"
 }
