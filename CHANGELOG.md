@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-03-08 (Rosie)
+
+### Fixed
+
+- Sync installer version output with the documented release version
+- Count failed `php artisan about`, `migrate:status`, and `route:list` checks in the final health-check result
+- Abort explicitly in non-interactive mode when a health check fails instead of falling through an implicit prompt default
+
 ## [0.1.5] - 2026-02-24 (Rosie)
 
 ### Added
