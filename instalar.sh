@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.4"
+SCRIPT_VERSION="0.1.6"
 
 # =============================================================================
 # Terminal Color Codes
@@ -3244,23 +3244,25 @@ async function runHealthChecks(projectPath) {
   }
 
   // Existing checks: about, migrate:status, route:list, Vite manifest
-  await runCommand("php", ["artisan", "about", "--no-interaction"], {
-    cwd: projectPath,
-    required: false,
-    warnOnFailure: false,
-  });
+  const artisanHealthChecks = [
+    { command: "about", label: "Artisan about" },
+    { command: "migrate:status", label: "Migration status" },
+    { command: "route:list", label: "Route list" },
+  ];
 
-  await runCommand("php", ["artisan", "migrate:status", "--no-interaction"], {
-    cwd: projectPath,
-    required: false,
-    warnOnFailure: false,
-  });
+  for (const healthCheck of artisanHealthChecks) {
+    const result = await runCommand("php", ["artisan", healthCheck.command, "--no-interaction"], {
+      cwd: projectPath,
+      required: false,
+      warnOnFailure: false,
+    });
 
-  await runCommand("php", ["artisan", "route:list", "--no-interaction"], {
-    cwd: projectPath,
-    required: false,
-    warnOnFailure: false,
-  });
+    if (result.exitCode !== 0) {
+      warn(`${healthCheck.label} check failed`);
+      healthCheckFailed = true;
+      failedChecks.push(`php artisan ${healthCheck.command}`);
+    }
+  }
 
   const manifestPath = path.join(projectPath, "public", "build", "manifest.json");
   if (fs.existsSync(manifestPath)) {
@@ -3277,6 +3279,11 @@ async function runHealthChecks(projectPath) {
     const failedList = failedChecks.join(", ");
     fail(`Health check failed for: ${failedList}`);
     console.log("");
+
+    if (state.runtime.nonInteractive) {
+      fail("Installation aborted because health checks failed in non-interactive mode.");
+      process.exit(1);
+    }
 
     const shouldContinue = await askYesNo("Do you want to continue anyway?", false);
     if (!shouldContinue) {

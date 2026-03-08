@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.5** (Rosie)
+Current version: **0.1.6** (Rosie)
 
 ---
 
@@ -267,7 +267,10 @@ INSTALAR runs:
   - `bootstrap/cache`
   - `.env`
 
-If any health check fails, you'll be prompted to continue or abort.
+If any health check fails:
+
+- Interactive mode prompts you to continue or abort.
+- Non-interactive mode aborts with exit code `1`.
 
 Optional afterward:
 
