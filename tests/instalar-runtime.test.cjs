@@ -1,0 +1,111 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
+
+test("runtime options merge the health-check override from CLI and JSON config", () => {
+  const harness = loadInstallerHarness();
+
+  const cliOptions = harness.parseCliArgs([
+    "--non-interactive",
+    "--print-plan",
+    "--preset",
+    "full",
+    "--allow-delete-any-existing",
+    "--continue-on-health-check-failure",
+  ]);
+  const cliRuntime = harness.resolveRuntime(cliOptions, {}, null);
+
+  assert.equal(cliOptions.continueOnHealthCheckFailure, true);
+  assert.equal(cliRuntime.nonInteractive, true);
+  assert.equal(cliRuntime.printPlan, true);
+  assert.equal(cliRuntime.preset, "full");
+  assert.equal(cliRuntime.allowDeleteAnyExisting, true);
+  assert.equal(cliRuntime.continueOnHealthCheckFailure, true);
+  assert.equal(cliRuntime.skipBoostInstall, true);
+
+  const configRuntime = harness.resolveRuntime(
+    harness.parseCliArgs(["--non-interactive"]),
+    {
+      continueOnHealthCheckFailure: true,
+      preset: "minimal",
+      printPlan: true,
+    },
+    "/tmp/instalar.json",
+  );
+
+  assert.equal(configRuntime.continueOnHealthCheckFailure, true);
+  assert.equal(configRuntime.printPlan, true);
+  assert.equal(configRuntime.preset, "minimal");
+  assert.equal(configRuntime.skipBoostInstall, true);
+  assert.equal(configRuntime.configPath, "/tmp/instalar.json");
+});
+
+test("runtime prefers explicit CLI mode and preserves other config flags", () => {
+  const harness = loadInstallerHarness();
+
+  const runtime = harness.resolveRuntime(
+    harness.parseCliArgs(["--mode", "update", "--verbose"]),
+    {
+      mode: "manual",
+      debug: true,
+      backup: true,
+    },
+    "/tmp/instalar.json",
+  );
+
+  assert.equal(runtime.mode, "update");
+  assert.equal(runtime.verbose, true);
+  assert.equal(runtime.debug, true);
+  assert.equal(runtime.backup, true);
+});
+
+test("runtime falls back to the standard preset when config requests an invalid preset", () => {
+  const harness = loadInstallerHarness();
+  const warnings = [];
+
+  harness.setWarn((message) => {
+    warnings.push(message);
+  });
+
+  const runtime = harness.resolveRuntime(
+    harness.parseCliArgs([]),
+    { preset: "enterprise" },
+    null,
+  );
+
+  assert.equal(runtime.preset, "standard");
+  assert.deepEqual(warnings, ["Invalid package preset: enterprise. Falling back to standard."]);
+});
+
+test("runtime keeps boost install enabled for interactive runs unless explicitly skipped", () => {
+  const harness = loadInstallerHarness();
+
+  const defaultRuntime = harness.resolveRuntime(harness.parseCliArgs([]), {}, null);
+  const configRuntime = harness.resolveRuntime(
+    harness.parseCliArgs([]),
+    { skipBoostInstall: true },
+    null,
+  );
+
+  assert.equal(defaultRuntime.nonInteractive, false);
+  assert.equal(defaultRuntime.skipBoostInstall, false);
+  assert.equal(configRuntime.skipBoostInstall, true);
+});
+
+test("validateInstallerConfig rejects unknown keys and invalid nested values", () => {
+  const harness = loadInstallerHarness();
+
+  assert.throws(
+    () => harness.validateInstallerConfig({ mysteryFlag: true }),
+    /Unknown configuration key: config\.mysteryFlag/,
+  );
+  assert.throws(
+    () => harness.validateInstallerConfig({ database: { connection: "mongo" } }),
+    /config\.database\.connection must be sqlite, mysql, or pgsql/,
+  );
+  assert.throws(
+    () => harness.validateInstallerConfig({ manual: { preset: "enterprise" } }),
+    /config\(?.*?\.manual\.preset must be minimal, standard, or full|config\.manual\.preset must be minimal, standard, or full/,
+  );
+});
