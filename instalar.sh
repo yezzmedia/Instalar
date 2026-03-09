@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.12"
+SCRIPT_VERSION="0.1.13"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -147,17 +147,9 @@ section() {
 # Prints the INSTALAR ASCII art banner
 banner() {
   clear 2>/dev/null || true
-  printf '%b\n' "$(paint "${MAGENTA}" "#######################################################")"
-  printf '%b\n' "$(paint "${MAGENTA}" "####     # ### #     #     ##   ## ######   ##    #####")"
-  printf '%b\n' "$(paint "${BLUE}" "###### ###  ## # ####### ### ### # ##### ### # ### ####")"
-  printf '%b\n' "$(paint "${BLUE}" "###### ### # # # ####### ### ### # ##### ### # ### ####")"
-  printf '%b\n' "$(paint "${CYAN}" "###### ### ##  ##   #### ###     # #####     #    #####")"
-  printf '%b\n' "$(paint "${CYAN}" "###### ### ### ##### ### ### ### # ##### ### # # ######")"
-  printf '%b\n' "$(paint "${GREEN}" "###### ### ### ##### ### ### ### # ##### ### # ## #####")"
-  printf '%b\n' "$(paint "${GREEN}" "####     # ### #     ### ### ### #     # ### # ### ####")"
-  printf '%b\n' "$(paint "${MAGENTA}" "#######################################################")"
-  printf '%b\n' "$(paint "${BOLD}${YELLOW}" "=================[  INSTALAR  ]=================")"
-  printf '%b\n' "$(paint "${DIM}" "       Dependency Check + Installation")"
+  printf '%b\n' "$(paint "${BOLD}${WHITE}" "INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})")"
+  printf '%b\n' "$(paint "${DIM}" "Laravel setup, update, and diagnostics")"
+  printf '%b\n' "$(paint "${DIM}" "Dependency checks run first. The guided installer continues afterwards.")"
 }
 
 # =============================================================================
@@ -174,30 +166,42 @@ Usage:
   ./instalar.sh --help
   ./instalar.sh --non-interactive --config instalar.json
 
-Options:
+Modes:
+  auto                    Create a new Laravel + Filament project with opinionated defaults
+  manual                  Guided step-by-step project setup
+  update                  Update the Laravel project in the current directory
+  doctor                  Diagnose the Laravel project in the current directory
+
+Common options:
+  --mode <auto|manual|update|doctor>
   --config <file>         Path to JSON configuration (Node phase)
-  --non-interactive       No prompts, use defaults/config
   --dry-run               Resolve input, print the plan, and exit without modifying files
   --print-plan            Legacy alias for --dry-run
-  --preset <name>         Package preset: minimal, standard, or full
   --log-file <path>       Write installer output to a plain-text log file
+  --preset <name>         Package preset: minimal, standard, or full
   --skip-boost-install    Skip interactive boost:install step
-  --continue-on-health-check-failure
-                          Continue unattended runs even when final health checks fail
   --backup                Backup existing target directory before replacing
-  --admin-generate        Generate admin password instead of "password"
-  --mode <auto|manual|update|doctor>
-  --allow-delete-existing Replace existing target directories in non-interactive mode
-  --allow-delete-any-existing
-                         Also allow replacing generic or git-managed directories
   --start-server          Automatically run composer run dev at the end
-  --deps-update           Apply dependency updates in Bash phase
   --verbose               Enable verbose output
   --debug                 Enable debug mode (shows all commands)
 
-Flow:
-  1) Bash checks/installs/updates dependencies
-  2) Then installation continues automatically
+Automation:
+  --non-interactive       No prompts, use defaults/config
+  --admin-generate        Generate admin password instead of "password"
+  --continue-on-health-check-failure
+                          Continue unattended runs even when final health checks fail
+  --deps-update           Apply dependency updates in Bash phase
+
+Safety:
+  --allow-delete-existing Replace existing target directories in non-interactive mode
+  --allow-delete-any-existing
+                          Also allow replacing generic or git-managed directories
+
+Examples:
+  ./instalar.sh --mode manual
+  ./instalar.sh --mode auto --non-interactive --config ./instalar.json
+  ./instalar.sh --mode doctor --log-file ./doctor.log
+  ./instalar.sh --mode update --dry-run
 EOF
 }
 
@@ -1509,11 +1513,57 @@ function debug(message) {
 
 // Prints a visual section heading.
 function section(title) {
-  const line = "-".repeat(72);
-  console.log(`\n${color(line, C.dim)}`);
+  const line = "-".repeat(Math.max(24, Math.min(56, String(title).length + 8)));
+  console.log("");
   console.log(color(title, C.bold + C.white));
   console.log(color(line, C.dim));
-  appendToRuntimeLog(`\n${line}\n${title}\n${line}\n`);
+  appendToRuntimeLog(`\n${title}\n${line}\n`);
+}
+
+// Prints a compact subsection heading used inside plans and summaries.
+function subsection(title) {
+  console.log("");
+  console.log(`  ${color(title, C.bold + C.cyan)}`);
+  appendToRuntimeLog(`\n  ${title}\n`);
+}
+
+// Writes a plain detail line without the heavier [INFO] prefix.
+function detail(message = "") {
+  console.log(`  ${message}`);
+  appendToRuntimeLog(`  ${stripAnsi(message)}\n`);
+}
+
+// Writes a compact key/value row for grouped plan and summary output.
+function printKeyValueRow(label, value, options = {}) {
+  const { labelWidth = 22 } = options;
+  const normalizedValue =
+    value === undefined || value === null || value === "" ? "-" : String(value);
+  detail(`${`${label}:`.padEnd(labelWidth)} ${normalizedValue}`);
+}
+
+// Prints a grouped review section from a list of [label, value] pairs.
+function printReviewSection(title, entries = []) {
+  subsection(title);
+  entries.forEach(([label, value]) => printKeyValueRow(label, value));
+}
+
+// Prints a compact list with a heading for plans, summaries, and doctor output.
+function printBulletSection(title, items = [], emptyLabel = "-") {
+  subsection(title);
+  if (!Array.isArray(items) || items.length === 0) {
+    detail(emptyLabel);
+    return;
+  }
+
+  items.forEach((item) => detail(`- ${item}`));
+}
+
+// Prints the current guided step in manual mode.
+function printStepCard(step, total, title, description = "") {
+  section(`Step ${step}/${total} - ${title}`);
+  if (description) {
+    detail(description);
+  }
 }
 
 // Parses Node-phase CLI arguments and normalizes known flags.
@@ -2252,13 +2302,14 @@ async function askChoice(question, options, defaultIndex = 0) {
   }
 
   console.log(`\n${color(question, C.bold + C.white)}`);
+  detail("Choose one option and press Enter.");
   options.forEach((option, index) => {
     const mark = index === defaultIndex ? color(" (default)", C.dim) : "";
     console.log(`  ${color(String(index + 1), C.cyan)}) ${option}${mark}`);
   });
 
   while (true) {
-    const raw = await ask("Selection", String(defaultIndex + 1));
+    const raw = await ask("Choice number", String(defaultIndex + 1));
     const num = Number.parseInt(raw, 10);
     if (Number.isInteger(num) && num >= 1 && num <= options.length) {
       return num - 1;
@@ -2286,16 +2337,17 @@ async function askMultiChoice(question, options, defaultIndexes = []) {
   }
 
   console.log(`\n${color(question, C.bold + C.white)}`);
+  detail("Select one or more options. Press Enter to keep the default selection.");
   options.forEach((option, index) => {
     const mark = defaultIndexes.includes(index) ? color(" [x]", C.green) : "";
     console.log(`  ${color(String(index + 1), C.cyan)}) ${option}${mark}`);
   });
-  console.log(`  ${color("Tip", C.dim)}: Separate multiple values with comma or space`);
+  detail("Tip: Separate multiple values with comma or space.");
 
   const defaultValue = defaultIndexes.map((index) => String(index + 1)).join(",");
 
   while (true) {
-    const raw = await ask("Selection", defaultValue);
+    const raw = await ask("Choice numbers", defaultValue);
     if (!raw.trim()) {
       return [...defaultIndexes];
     }
@@ -2358,7 +2410,7 @@ async function askMultiChoiceInteractive(question, options, defaultIndexes = [])
   const selected = new Set(defaultIndexes);
   let cursor = 0;
   let firstRender = true;
-  const rows = options.length + 3;
+  const rows = options.length + 5;
 
   const render = () => {
     if (!firstRender) {
@@ -2367,6 +2419,9 @@ async function askMultiChoiceInteractive(question, options, defaultIndexes = [])
 
     process.stdout.write("\x1b[0J");
     process.stdout.write(`${color(question, C.bold + C.white)}\n`);
+    process.stdout.write(
+      `  ${color("Selected:", C.dim)} ${selected.size}/${options.length}\n`,
+    );
 
     options.forEach((option, index) => {
       const pointer = index === cursor ? color("›", C.cyan) : " ";
@@ -3112,7 +3167,8 @@ function cleanupDuplicateTwoFactorMigrations(projectDir) {
 // =============================================================================
 // Collects auto-mode installation config from prompts and presets.
 async function collectAutoConfig(preset = {}) {
-  section("Auto Mode");
+  section("Automatic Setup");
+  detail("Resolve a project name, apply a preset, and use opinionated defaults.");
 
   const appNameDefault = preset.projectName || preset.appName || "Laravel Filament App";
   const appName = await askRequired("Project name", appNameDefault);
@@ -3123,7 +3179,7 @@ async function collectAutoConfig(preset = {}) {
     (item) => item.id === resolvePackagePresetName(preset.preset || state.runtime.preset),
   );
   const selectedPresetIndex = await askChoice(
-    "Choose package preset",
+    "Package preset",
     presetOptions,
     defaultPresetIndex >= 0 ? defaultPresetIndex : 1,
   );
@@ -3182,24 +3238,16 @@ async function collectAutoConfig(preset = {}) {
 
 // Collects manual-mode installation config with full interactive choices.
 async function collectManualConfig(preset = {}) {
-  section("Manual Mode");
+  const totalSteps = 6;
 
+  printStepCard(1, totalSteps, "Project Basics", "Name the app and choose where it should be created.");
   const appNameDefault = preset.projectName || preset.appName || "Laravel Filament App";
   const appName = await askRequired("Project name", appNameDefault);
   const defaultDir = `./${slugify(appName) || "laravel-filament-app"}`;
   const defaultProjectPath = preset.projectPath || defaultDir;
   const projectPath = path.resolve(process.cwd(), await askRequired("Project directory", defaultProjectPath));
-  const presetOptions = PACKAGE_PRESETS.map((item) => formatPackagePresetLabel(item));
-  const defaultPresetIndex = PACKAGE_PRESETS.findIndex(
-    (item) => item.id === resolvePackagePresetName(preset.preset || state.runtime.preset),
-  );
-  const selectedPresetIndex = await askChoice(
-    "Choose package preset",
-    presetOptions,
-    defaultPresetIndex >= 0 ? defaultPresetIndex : 1,
-  );
-  const selectedPreset = PACKAGE_PRESETS[selectedPresetIndex];
 
+  printStepCard(2, totalSteps, "Database", "Choose a local SQLite file or provide a server database connection.");
   const defaultDbChoice =
     preset?.database?.connection === "mysql"
       ? 1
@@ -3208,7 +3256,7 @@ async function collectManualConfig(preset = {}) {
         : 0;
 
   const dbChoice = await askChoice(
-    "Choose database",
+    "Database engine",
     ["SQLite", "MySQL", "PostgreSQL"],
     defaultDbChoice,
   );
@@ -3235,6 +3283,7 @@ async function collectManualConfig(preset = {}) {
     };
   }
 
+  printStepCard(3, totalSteps, "Laravel Starter", "Pick the starter flags that should be passed to laravel new.");
   const laravelFlagOptions = ["--npm", "--livewire", "--boost"];
   const resolvedLaravelFlags = normalizeLaravelFlags(
     preset.laravelNewFlags || preset.laravelFlags,
@@ -3245,7 +3294,7 @@ async function collectManualConfig(preset = {}) {
     .map((flag, index) => (resolvedLaravelFlags.includes(flag) ? index : -1))
     .filter((index) => index >= 0);
   const selectedLaravelFlagIndexes = await askMultiChoiceWithAll(
-    "Choose Laravel startup flags",
+    "Starter features",
     laravelFlagOptions,
     defaultLaravelFlagIndexes,
   );
@@ -3255,20 +3304,31 @@ async function collectManualConfig(preset = {}) {
 
   const defaultTestSuiteIndex = resolvedLaravelFlags.includes("--phpunit") ? 1 : 0;
   const testSuiteChoice = await askChoice(
-    "Choose Laravel test suite",
+    "Default test suite",
     ["Pest", "PHPUnit"],
     defaultTestSuiteIndex,
   );
   const testSuiteFlag = testSuiteChoice === 1 ? "--phpunit" : "--pest";
   const laravelNewFlags = [...selectedStartupFlags, testSuiteFlag];
 
+  printStepCard(4, totalSteps, "Packages", "Choose a preset first, then refine the optional package stack.");
+  const presetOptions = PACKAGE_PRESETS.map((item) => formatPackagePresetLabel(item));
+  const defaultPresetIndex = PACKAGE_PRESETS.findIndex(
+    (item) => item.id === resolvePackagePresetName(preset.preset || state.runtime.preset),
+  );
+  const selectedPresetIndex = await askChoice(
+    "Package preset",
+    presetOptions,
+    defaultPresetIndex >= 0 ? defaultPresetIndex : 1,
+  );
+  const selectedPreset = PACKAGE_PRESETS[selectedPresetIndex];
   const optionalLabels = OPTIONAL_PACKAGE_CHOICES.map((choice) => formatPackageChoiceLabel(choice));
   const defaultOptionalIndexes = getOptionIndexesByIds(
     preset.optionalPackageIds,
     getOptionIndexesByIds(selectedPreset.optionalPackageIds),
   );
   const selected = await askMultiChoiceWithAll(
-    "Choose optional packages (Filament + Boost are always active)",
+    "Optional packages",
     optionalLabels,
     defaultOptionalIndexes,
   );
@@ -3296,19 +3356,20 @@ async function collectManualConfig(preset = {}) {
     : "";
 
   const customNormal = splitPackageInput(
-    await ask("Custom Composer packages (normal, optional)", customNormalDefault),
+    await ask("Additional Composer packages", customNormalDefault),
   );
   const customDev = splitPackageInput(
-    await ask("Custom Composer packages (dev, optional)", customDevDefault),
+    await ask("Additional dev Composer packages", customDevDefault),
   );
 
+  printStepCard(5, totalSteps, "Admin and Git", "Decide whether to create an admin user and initialize Git.");
   const defaultCreateAdmin =
     preset.createAdmin !== undefined ? Boolean(preset.createAdmin) : true;
-  const createAdmin = await askYesNo("Create Filament admin user", defaultCreateAdmin);
+  const createAdmin = await askYesNo("Create a Filament admin user", defaultCreateAdmin);
   const admin = resolveAdminCredentials(preset, createAdmin);
 
   const gitInit = await askYesNo(
-    "Run git init",
+    "Initialize a Git repository",
     preset.gitInit !== undefined ? Boolean(preset.gitInit) : false,
   );
 
@@ -3451,34 +3512,62 @@ function describeExistingPathStrategy(targetPath, runtimeOptions = state.runtime
     : "Prompt before replacing the existing Laravel project";
 }
 
+function buildDatabasePlanEntries(database) {
+  const entries = [["Connection", database.connection]];
+
+  if (database.connection === "sqlite") {
+    entries.push(["Database file", "database/database.sqlite"]);
+    return entries;
+  }
+
+  entries.push(["Host", database.host]);
+  entries.push(["Port", database.port]);
+  entries.push(["Database", database.database]);
+  entries.push(["User", database.username]);
+  entries.push(["Password", database.password ? "(hidden)" : "(empty)"]);
+  return entries;
+}
+
 function printInstallPlan(config, runtimeOptions = state.runtime) {
   const packageSet = packageSetFromConfig(config);
   const preset = getPackagePresetById(config.presetId || runtimeOptions.preset);
   const pathClassification = classifyExistingPath(config.projectPath);
 
   section("Installation Plan");
-  info(`Mode: ${config.mode}`);
-  info(`Preset: ${preset.title}`);
-  info(`Project: ${config.appName}`);
-  info(`Path: ${config.projectPath}`);
-  info(`Path type: ${describePathClassification(pathClassification)}`);
-  info(`Path strategy: ${describeExistingPathStrategy(config.projectPath, runtimeOptions)}`);
-  info(`Database: ${config.database.connection}`);
-  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
-  info(`Log file: ${runtimeOptions.logFile || "-"}`);
-  info(`Laravel flags: ${formatList(config.laravelNewFlags)}`);
-  info(`Normal packages: ${formatList(config.normalPackages)}`);
-  info(`Dev packages: ${formatList(config.devPackages)}`);
-  info(`Create admin: ${config.createAdmin ? "yes" : "no"}`);
-  info(`Admin password: ${describeAdminPasswordStrategy(config)}`);
-  info(`Configured secrets: ${configUsesSensitiveValues(config) ? "yes" : "no"}`);
-  info(`Git init: ${config.gitInit ? "yes" : "no"}`);
-  info(`Boost install: ${runtimeOptions.skipBoostInstall ? "skip" : "run interactively"}`);
-  info(
-    `Health-check failure override: ${
-      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort"
-    }`,
-  );
+  detail("Review the grouped summary before the installer creates or replaces files.");
+  printReviewSection("Project", [
+    ["Mode", config.mode],
+    ["Name", config.appName],
+    ["Path", config.projectPath],
+    ["Path type", describePathClassification(pathClassification)],
+    ["Path strategy", describeExistingPathStrategy(config.projectPath, runtimeOptions)],
+  ]);
+  printReviewSection("Database", buildDatabasePlanEntries(config.database));
+  printReviewSection("Starter", [
+    ["Laravel flags", formatList(config.laravelNewFlags)],
+    ["Boost install", runtimeOptions.skipBoostInstall ? "skip" : "run interactively"],
+  ]);
+  printReviewSection("Packages", [
+    ["Preset", preset.title],
+    ["Normal packages", `${config.normalPackages.length} selected`],
+    ["Dev packages", `${config.devPackages.length} selected`],
+  ]);
+  printBulletSection("Normal Packages", config.normalPackages, "No extra normal packages.");
+  printBulletSection("Dev Packages", config.devPackages, "No dev packages.");
+  printReviewSection("Admin and Git", [
+    ["Create admin", config.createAdmin ? "yes" : "no"],
+    ["Admin password", describeAdminPasswordStrategy(config)],
+    ["Configured secrets", configUsesSensitiveValues(config) ? "yes" : "no"],
+    ["Git init", config.gitInit ? "yes" : "no"],
+  ]);
+  printReviewSection("Runtime", [
+    ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
+    ["Log file", runtimeOptions.logFile || "-"],
+    [
+      "Health-check failures",
+      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort",
+    ],
+  ]);
 
   if (runtimeOptions.printPlan) {
     ok("Plan preview only. No project files will be modified.");
@@ -3491,17 +3580,21 @@ function printInstallPlan(config, runtimeOptions = state.runtime) {
 
 function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
   section("Update Plan");
-  info(`Project: ${projectDir}`);
-  info(`Path type: ${describePathClassification(classifyExistingPath(projectDir))}`);
-  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
-  info(`Log file: ${runtimeOptions.logFile || "-"}`);
-  info(`Detected packages: ${formatList([...packages].sort())}`);
-  info(`Boost install: ${runtimeOptions.skipBoostInstall ? "skip" : "run interactively"}`);
-  info(
-    `Health-check failure override: ${
-      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort"
-    }`,
-  );
+  detail("Update the current Laravel project with a preview of the detected package stack.");
+  printReviewSection("Project", [
+    ["Project", projectDir],
+    ["Path type", describePathClassification(classifyExistingPath(projectDir))],
+  ]);
+  printReviewSection("Runtime", [
+    ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
+    ["Log file", runtimeOptions.logFile || "-"],
+    ["Boost install", runtimeOptions.skipBoostInstall ? "skip" : "run interactively"],
+    [
+      "Health-check failures",
+      runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort",
+    ],
+  ]);
+  printBulletSection("Detected Packages", [...packages].sort(), "No Composer packages detected.");
 
   if (runtimeOptions.printPlan) {
     ok("Plan preview only. No project files will be modified.");
@@ -4230,13 +4323,47 @@ async function runSetupCommands(projectDir, packages, config) {
   }
 }
 
+// Lets guided manual mode confirm the grouped review before execution starts.
+async function reviewManualConfig(config, runtimeOptions = state.runtime) {
+  const totalSteps = 6;
+
+  while (true) {
+    printStepCard(
+      totalSteps,
+      totalSteps,
+      "Review",
+      "Confirm the final plan, go back to the prompts, or cancel the run.",
+    );
+    printInstallPlan(config, runtimeOptions);
+
+    const action = await askChoice(
+      "Review action",
+      ["Start installation", "Review answers again", "Cancel"],
+      0,
+    );
+
+    if (action === 0) {
+      return "start";
+    }
+
+    if (action === 1) {
+      return "retry";
+    }
+
+    throw new Error("Cancelled by user.");
+  }
+}
+
 // Runs full installation workflow for new projects.
-async function runInstallFlow(config, runtimeOptions = state.runtime) {
+async function runInstallFlow(config, runtimeOptions = state.runtime, flowOptions = {}) {
+  const { skipPlanPrint = false, skipConfirmPrompt = false } = flowOptions;
   // The printed plan doubles as the source of truth for unattended runs, so the
   // workflow always resolves the package set from the same config object first.
-  const packageSet = printInstallPlan(config, runtimeOptions);
+  const packageSet = skipPlanPrint
+    ? packageSetFromConfig(config)
+    : printInstallPlan(config, runtimeOptions);
 
-  if (!runtimeOptions.nonInteractive) {
+  if (!runtimeOptions.nonInteractive && !skipConfirmPrompt) {
     const proceed = await askYesNo("Start installation with this plan", true);
     if (!proceed) {
       throw new Error("Cancelled by user.");
@@ -4448,44 +4575,41 @@ async function runUpdateFlow(projectDir) {
 // =============================================================================
 // Prints final success output including admin credentials and accumulated warnings.
 function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
-  section("Done");
+  section("Completed");
   ok("INSTALAR completed successfully.");
-  const writeSummaryLine = (line = "") => {
-    console.log(line);
-    appendToRuntimeLog(`${stripAnsi(line)}\n`);
-  };
+  printReviewSection("Project", [
+    ["Project path", projectPath],
+    ["Log file", runtimeOptions.logFile || "-"],
+  ]);
 
-  writeSummaryLine(`\n  ${color("Project path:", C.bold)} ${projectPath}`);
-  if (runtimeOptions.logFile) {
-    writeSummaryLine(`  ${color("Log file:", C.bold)} ${runtimeOptions.logFile}`);
-  }
-  writeSummaryLine(`  ${color("Next steps:", C.bold)}`);
-  writeSummaryLine(`  - ${color(`cd ${projectPath}`, C.cyan)}`);
-  writeSummaryLine(`  - ${color("php artisan serve", C.cyan)}`);
+  const nextSteps = [`cd ${projectPath}`, "php artisan serve"];
   if (!runtimeOptions.startServer) {
-    writeSummaryLine(`  - ${color("composer run dev", C.cyan)}`);
+    nextSteps.push("composer run dev");
   }
   if (state.boostInstallSkipped) {
-    writeSummaryLine(`  - ${color("php artisan boost:install", C.cyan)}`);
+    nextSteps.push("php artisan boost:install");
   }
+  printBulletSection("Next Steps", nextSteps);
 
   if (state.createdAdmin) {
-    writeSummaryLine(`\n  ${color("Filament Admin:", C.bold + C.green)}`);
-    writeSummaryLine(`  Name:     ${state.createdAdmin.name}`);
-    writeSummaryLine(`  E-Mail:   ${state.createdAdmin.email}`);
-    if (state.createdAdmin.revealPassword) {
-      writeSummaryLine(`  Password: ${state.createdAdmin.password}`);
-    } else {
-      writeSummaryLine("  Password: (hidden)");
-      if (state.createdAdmin.passwordSource === "default") {
-        writeSummaryLine("  Note:     Rotate the default password immediately.");
-      }
+    const adminEntries = [
+      ["Name", state.createdAdmin.name],
+      ["Email", state.createdAdmin.email],
+      [
+        "Password",
+        state.createdAdmin.revealPassword ? state.createdAdmin.password : "(hidden)",
+      ],
+    ];
+
+    if (!state.createdAdmin.revealPassword && state.createdAdmin.passwordSource === "default") {
+      adminEntries.push(["Note", "Rotate the default password immediately."]);
     }
+
+    printReviewSection("Filament Admin", adminEntries);
   }
 
   if (state.warnings.length > 0) {
-    writeSummaryLine(`\n  ${color("Warnings:", C.bold + C.yellow)}`);
-    state.warnings.forEach((entry) => writeSummaryLine(`  - ${entry}`));
+    printBulletSection("Warnings", state.warnings);
   }
 }
 
@@ -5009,12 +5133,14 @@ function collectDoctorSuggestions(healthReport, permissionReport) {
 
 function printDoctorSummary(projectPath, healthReport, permissionReport) {
   section("Doctor Summary");
-  info(`Project: ${projectPath}`);
-  info(`Health checks: ${healthReport.passedCount}/${healthReport.totalCount} passed`);
-  info(`Permission checks: ${permissionReport.passedCount}/${permissionReport.totalCount} passed`);
+  printReviewSection("Project", [["Project", projectPath]]);
+  printReviewSection("Checks", [
+    ["Health checks", `${healthReport.passedCount}/${healthReport.totalCount} passed`],
+    ["Permission checks", `${permissionReport.passedCount}/${permissionReport.totalCount} passed`],
+  ]);
 
   if (healthReport.repairedCount > 0) {
-    info(`Repairs applied: ${healthReport.repairedCount}`);
+    printReviewSection("Repairs", [["Repairs applied", String(healthReport.repairedCount)]]);
   }
 
   const unresolvedIssues = [...new Set([
@@ -5028,11 +5154,11 @@ function printDoctorSummary(projectPath, healthReport, permissionReport) {
   }
 
   fail(`Doctor found unresolved issues: ${unresolvedIssues.join(", ")}`);
+  printBulletSection("Unresolved Issues", unresolvedIssues);
 
   const suggestions = collectDoctorSuggestions(healthReport, permissionReport);
   if (suggestions.length > 0) {
-    info("Suggested next steps:");
-    suggestions.forEach((suggestion) => info(`- ${suggestion}`));
+    printBulletSection("Suggested Next Steps", suggestions);
   }
 
   return false;
@@ -5072,18 +5198,22 @@ async function runDoctorFlow(projectPath, runtimeOptions = state.runtime) {
   const packages = readComposerPackages(projectPath);
 
   section("Doctor Mode");
-  info(`Project: ${projectPath}`);
-  info(`Path type: ${describePathClassification(classifyExistingPath(projectPath))}`);
-  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
-  info(`Log file: ${runtimeOptions.logFile || "-"}`);
-  info(`Detected packages: ${formatList([...packages].sort())}`);
-  info(
-    `Repair prompts: ${
+  detail("Inspect the current Laravel project and only offer narrow, safe repairs.");
+  printReviewSection("Project", [
+    ["Project", projectPath],
+    ["Path type", describePathClassification(classifyExistingPath(projectPath))],
+  ]);
+  printReviewSection("Runtime", [
+    ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
+    ["Log file", runtimeOptions.logFile || "-"],
+    [
+      "Repair prompts",
       runtimeOptions.nonInteractive || runtimeOptions.printPlan
         ? "disabled"
-        : "enabled for safe fixes"
-    }`,
-  );
+        : "enabled for safe fixes",
+    ],
+  ]);
+  printBulletSection("Detected Packages", [...packages].sort(), "No Composer packages detected.");
 
   const healthReport = await runHealthCheckSuite(projectPath, runtimeOptions, {
     sectionTitle: "Health Check",
@@ -5110,30 +5240,48 @@ async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
 
 // Prints Node-phase usage help.
 function printNodeUsage() {
-  console.log("INSTALAR Installer");
+  console.log(`INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})`);
   console.log("");
   console.log("Usage:");
   console.log("  ./instalar.sh");
   console.log("  ./instalar.sh --help");
   console.log("  ./instalar.sh --non-interactive --config instalar.json");
   console.log("");
-  console.log("Options:");
+  console.log("Modes:");
+  console.log("  auto                    Create a new Laravel + Filament project with opinionated defaults");
+  console.log("  manual                  Guided step-by-step project setup");
+  console.log("  update                  Update the Laravel project in the current directory");
+  console.log("  doctor                  Diagnose the Laravel project in the current directory");
+  console.log("");
+  console.log("Common options:");
+  console.log("  --mode <auto|manual|update|doctor>");
   console.log("  --config <file>         JSON configuration file (default: ./instalar.json)");
-  console.log("  --non-interactive       No prompts, uses defaults/config");
   console.log("  --dry-run               Resolve input, print the resolved plan, and exit");
   console.log("  --print-plan            Legacy alias for --dry-run");
   console.log("  --log-file <path>       Write installer output to a plain-text log file");
   console.log("  --preset <name>         Package preset: minimal, standard, or full");
   console.log("  --skip-boost-install    Skip interactive boost:install");
+  console.log("  --backup                Backup existing target directory before replacing");
+  console.log("  --start-server          Automatically run composer run dev at the end");
+  console.log("  --verbose               Enable verbose output");
+  console.log("  --debug                 Enable debug mode (shows all commands)");
+  console.log("");
+  console.log("Automation:");
+  console.log("  --non-interactive       No prompts, uses defaults/config");
+  console.log("  --admin-generate        Generate admin password");
   console.log("  --continue-on-health-check-failure");
   console.log("                          Continue unattended runs despite failed health checks");
-  console.log("  --mode <auto|manual|update|doctor>");
-  console.log("  --backup                Backup existing target directory before replacing");
-  console.log("  --admin-generate        Generate admin password");
+  console.log("");
+  console.log("Safety:");
   console.log("  --allow-delete-existing Allow replacing in non-interactive mode");
   console.log("  --allow-delete-any-existing");
   console.log("                          Also allow replacing generic or git-managed directories");
-  console.log("  --start-server          Automatically run composer run dev at the end");
+  console.log("");
+  console.log("Examples:");
+  console.log("  ./instalar.sh --mode manual");
+  console.log("  ./instalar.sh --mode auto --non-interactive --config ./instalar.json");
+  console.log("  ./instalar.sh --mode doctor --log-file ./doctor.log");
+  console.log("  ./instalar.sh --mode update --dry-run");
 }
 
 // Node-phase main entrypoint.
@@ -5234,20 +5382,31 @@ async function main() {
   }
 
   if (mode === "manual") {
-    const config = await collectManualConfig(getModePreset("manual"));
-    if (state.runtime.printPlan) {
-      printInstallPlan(config, state.runtime);
+    while (true) {
+      const config = await collectManualConfig(getModePreset("manual"));
+      if (state.runtime.printPlan) {
+        printInstallPlan(config, state.runtime);
+        return;
+      }
+
+      const action = await reviewManualConfig(config, state.runtime);
+      if (action === "retry") {
+        continue;
+      }
+
+      await runInstallFlow(config, state.runtime, {
+        skipPlanPrint: true,
+        skipConfirmPrompt: true,
+      });
+      await finalizeProject(config.projectPath, state.runtime);
       return;
     }
-    await runInstallFlow(config, state.runtime);
-    await finalizeProject(config.projectPath, state.runtime);
-    return;
   }
 
   if (hasLaravelProject) {
     const action = await askChoice(
-      "Laravel project detected in current directory",
-      ["Update existing project", "New installation (Auto)", "New installation (Manual)"],
+      "A Laravel project was detected in the current directory",
+      ["Update the current project", "Create a new project (Automatic)", "Create a new project (Manual)"],
       0,
     );
 
@@ -5272,17 +5431,32 @@ async function main() {
       return;
     }
 
-    const config = await collectManualConfig(getModePreset("manual"));
-    if (state.runtime.printPlan) {
-      printInstallPlan(config, state.runtime);
+    while (true) {
+      const config = await collectManualConfig(getModePreset("manual"));
+      if (state.runtime.printPlan) {
+        printInstallPlan(config, state.runtime);
+        return;
+      }
+
+      const reviewAction = await reviewManualConfig(config, state.runtime);
+      if (reviewAction === "retry") {
+        continue;
+      }
+
+      await runInstallFlow(config, state.runtime, {
+        skipPlanPrint: true,
+        skipConfirmPrompt: true,
+      });
+      await finalizeProject(config.projectPath, state.runtime);
       return;
     }
-    await runInstallFlow(config, state.runtime);
-    await finalizeProject(config.projectPath, state.runtime);
-    return;
   }
 
-  const modeChoice = await askChoice("Choose mode", ["Automatic", "Manual"], 0);
+  const modeChoice = await askChoice(
+    "What do you want to do?",
+    ["Automatic setup", "Guided manual setup"],
+    0,
+  );
   if (modeChoice === 0) {
     const config = await collectAutoConfig(getModePreset("auto"));
     if (state.runtime.printPlan) {
@@ -5294,13 +5468,25 @@ async function main() {
     return;
   }
 
-  const config = await collectManualConfig(getModePreset("manual"));
-  if (state.runtime.printPlan) {
-    printInstallPlan(config, state.runtime);
+  while (true) {
+    const config = await collectManualConfig(getModePreset("manual"));
+    if (state.runtime.printPlan) {
+      printInstallPlan(config, state.runtime);
+      return;
+    }
+
+    const action = await reviewManualConfig(config, state.runtime);
+    if (action === "retry") {
+      continue;
+    }
+
+    await runInstallFlow(config, state.runtime, {
+      skipPlanPrint: true,
+      skipConfirmPrompt: true,
+    });
+    await finalizeProject(config.projectPath, state.runtime);
     return;
   }
-  await runInstallFlow(config, state.runtime);
-  await finalizeProject(config.projectPath, state.runtime);
 }
 
 // Global top-level error handler for the Node phase.
