@@ -18,7 +18,24 @@ function extractEmbeddedNodeSource() {
   );
 }
 
+function readInstallerShellMetadata() {
+  const installerPath = path.join(__dirname, "..", "..", "instalar.sh");
+  const installerSource = fs.readFileSync(installerPath, "utf8");
+  const versionMatch = installerSource.match(/SCRIPT_VERSION="([^"]+)"/);
+  const codenameMatch = installerSource.match(/SCRIPT_CODENAME="([^"]+)"/);
+
+  if (!versionMatch || !codenameMatch) {
+    throw new Error("Installer shell metadata could not be extracted");
+  }
+
+  return {
+    version: versionMatch[1],
+    codename: codenameMatch[1],
+  };
+}
+
 function loadInstallerHarness() {
+  const metadata = readInstallerShellMetadata();
   const source = `${extractEmbeddedNodeSource()}
 globalThis.__instalarTest = {
   state,
@@ -28,6 +45,9 @@ globalThis.__instalarTest = {
   resolvePackagePresetName,
   getPackagePresetById,
   askSecret,
+  initializeRuntimeLog,
+  stripAnsi,
+  buildCommandFailureSnippet,
   formatCommandForDisplay,
   resolveAuthUserModel,
   classifyExistingPath,
@@ -37,6 +57,7 @@ globalThis.__instalarTest = {
   resolveAdminCredentials,
   printInstallPlan,
   printUpdatePlan,
+  runCommand,
   runHealthChecks,
   setRunCommand(value) { runCommand = value; },
   setAskYesNo(value) { askYesNo = value; },
@@ -49,7 +70,11 @@ globalThis.__instalarTest = {
 `;
 
   const fakeProcess = {
-    env: process.env,
+    env: {
+      ...process.env,
+      INSTALAR_SCRIPT_VERSION: metadata.version,
+      INSTALAR_SCRIPT_CODENAME: metadata.codename,
+    },
     argv: [],
     stdin: { isTTY: false },
     stdout: { isTTY: false, write() {} },

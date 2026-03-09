@@ -3,14 +3,15 @@ const assert = require("node:assert/strict");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
 
-test("parseCliArgs accepts aliases and explicit assignment forms", () => {
+test("parseCliArgs accepts aliases, dry-run, and explicit assignment forms", () => {
   const harness = loadInstallerHarness();
   const options = harness.parseCliArgs([
     "-y",
     "--config=instalar.json",
     "--mode=manual",
     "--preset=full",
-    "--print-plan",
+    "--dry-run",
+    "--log-file=logs/instalar.log",
     "--skip-boost-install",
     "--allow-delete-any-existing",
     "--continue-on-health-check-failure",
@@ -22,6 +23,7 @@ test("parseCliArgs accepts aliases and explicit assignment forms", () => {
   assert.equal(options.help, false);
   assert.equal(options.nonInteractive, true);
   assert.equal(options.printPlan, true);
+  assert.equal(options.logFile, "logs/instalar.log");
   assert.equal(options.preset, "full");
   assert.equal(options.skipBoostInstall, true);
   assert.equal(options.allowDeleteAnyExisting, true);
@@ -38,9 +40,10 @@ test("parseCliArgs accepts aliases and explicit assignment forms", () => {
 
 test("parseCliArgs accepts separated preset values", () => {
   const harness = loadInstallerHarness();
-  const options = harness.parseCliArgs(["--preset", "minimal"]);
+  const options = harness.parseCliArgs(["--preset", "minimal", "--log-file", "instalar.log"]);
 
   assert.equal(options.preset, "minimal");
+  assert.equal(options.logFile, "instalar.log");
 });
 
 test("parseCliArgs resets invalid modes and emits a warning", () => {

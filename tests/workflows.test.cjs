@@ -15,7 +15,7 @@ test("CI workflow runs the expected installer quality gates", () => {
   assert.match(workflow, /bash -n instalar\.sh/);
   assert.match(workflow, /shellcheck instalar\.sh/);
   assert.match(workflow, /\.\/instalar\.sh --help/);
-  assert.match(workflow, /node --test/);
+  assert.match(workflow, /node --test tests\/\*\.cjs/);
 });
 
 test("release workflow validates metadata and manages draft releases for tags", () => {

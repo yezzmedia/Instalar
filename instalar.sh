@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.9"
+SCRIPT_VERSION="0.1.10"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -87,7 +87,7 @@ declare -A DEP_UPDATE_TARGET=()                                # Maps dep name -
 # Flags for script behavior
 BASH_NON_INTERACTIVE=0      # Set to 1 to skip all prompts (--non-interactive)
 BASH_APPLY_DEP_UPDATES=0   # Set to 1 to auto-apply dependency updates (--deps-update)
-BASH_PRINT_PLAN=0           # Set to 1 to print the resolved installation/update plan (--print-plan)
+BASH_PRINT_PLAN=0           # Set to 1 to print the resolved installation/update plan (--dry-run/--print-plan)
 BASH_VERBOSE=0              # Set to 1 to enable verbose output (--verbose)
 BASH_DEBUG=0                # Set to 1 to enable debug mode (--debug)
 BASH_HAS_TTY=0             # Set to 1 if /dev/tty is available for interactive input
@@ -177,8 +177,10 @@ Usage:
 Options:
   --config <file>         Path to JSON configuration (Node phase)
   --non-interactive       No prompts, use defaults/config
-  --print-plan            Collect input and print the resolved plan without modifying files
+  --dry-run               Resolve input, print the plan, and exit without modifying files
+  --print-plan            Legacy alias for --dry-run
   --preset <name>         Package preset: minimal, standard, or full
+  --log-file <path>       Write installer output to a plain-text log file
   --skip-boost-install    Skip interactive boost:install step
   --continue-on-health-check-failure
                           Continue unattended runs even when final health checks fail
@@ -1080,7 +1082,7 @@ parse_bash_args() {
       --deps-update)
         BASH_APPLY_DEP_UPDATES=1
         ;;
-      --print-plan)
+      --dry-run|--print-plan)
         BASH_PRINT_PLAN=1
         ;;
       --verbose)
@@ -1159,6 +1161,8 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const readline = require("node:readline/promises");
 const readlineCore = require("node:readline");
+const SCRIPT_VERSION = process.env.INSTALAR_SCRIPT_VERSION || "0.0.0";
+const SCRIPT_CODENAME = process.env.INSTALAR_SCRIPT_CODENAME || "Unknown";
 
 // =============================================================================
 // Console Styling
@@ -1405,6 +1409,8 @@ const state = {
     adminGenerate: false,
     allowDeleteExisting: false,
     allowDeleteAnyExisting: false,
+    logFile: null,
+    logFileWriteFailed: false,
     skipBoostInstall: false,
     startServer: false,
     mode: null,
@@ -1420,31 +1426,76 @@ function color(text, code) {
   return `${code}${text}${C.reset}`;
 }
 
+function stripAnsi(value) {
+  return String(value).replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function appendToRuntimeLog(text) {
+  if (!state.runtime.logFile) {
+    return;
+  }
+
+  try {
+    fs.appendFileSync(state.runtime.logFile, stripAnsi(text), "utf8");
+  } catch (error) {
+    if (!state.runtime.logFileWriteFailed) {
+      state.runtime.logFileWriteFailed = true;
+      process.stderr.write(
+        `  [WARN] Failed to write installer log file ${state.runtime.logFile}: ${error.message}\n`,
+      );
+    }
+  }
+}
+
+function initializeRuntimeLog() {
+  if (!state.runtime.logFile) {
+    return;
+  }
+
+  state.runtime.logFileWriteFailed = false;
+  fs.mkdirSync(path.dirname(state.runtime.logFile), { recursive: true });
+  fs.writeFileSync(
+    state.runtime.logFile,
+    [
+      `INSTALAR ${SCRIPT_VERSION} (${SCRIPT_CODENAME})`,
+      `Started: ${new Date().toISOString()}`,
+      `Working directory: ${process.cwd()}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 // Prints an informational message.
 function info(message) {
   console.log(`  ${color("[INFO]", C.cyan)} ${message}`);
+  appendToRuntimeLog(`  [INFO] ${message}\n`);
 }
 
 // Prints a success message.
 function ok(message) {
   console.log(`  ${color("[ OK ]", C.green)} ${message}`);
+  appendToRuntimeLog(`  [ OK ] ${message}\n`);
 }
 
 // Prints a warning message and stores it for the final summary.
 function warn(message) {
   state.warnings.push(message);
   console.log(`  ${color("[WARN]", C.yellow)} ${message}`);
+  appendToRuntimeLog(`  [WARN] ${message}\n`);
 }
 
 // Prints an error message.
 function fail(message) {
   console.log(`  ${color("[ERR ]", C.red)} ${message}`);
+  appendToRuntimeLog(`  [ERR ] ${message}\n`);
 }
 
 // Prints a verbose message when --verbose flag is set.
 function verbose(message) {
   if (state.runtime.verbose || state.runtime.debug) {
     console.log(color(`  [VERBOSE] ${message}`, C.dim));
+    appendToRuntimeLog(`  [VERBOSE] ${message}\n`);
   }
 }
 
@@ -1452,6 +1503,7 @@ function verbose(message) {
 function debug(message) {
   if (state.runtime.debug) {
     console.log(color(`  [DEBUG] ${message}`, C.gray));
+    appendToRuntimeLog(`  [DEBUG] ${message}\n`);
   }
 }
 
@@ -1461,6 +1513,7 @@ function section(title) {
   console.log(`\n${color(line, C.dim)}`);
   console.log(color(title, C.bold + C.white));
   console.log(color(line, C.dim));
+  appendToRuntimeLog(`\n${line}\n${title}\n${line}\n`);
 }
 
 // Parses Node-phase CLI arguments and normalizes known flags.
@@ -1477,6 +1530,7 @@ function parseCliArgs(args) {
     mode: null,
     allowDeleteExisting: false,
     allowDeleteAnyExisting: false,
+    logFile: null,
     skipBoostInstall: false,
     startServer: false,
     verbose: false,
@@ -1496,7 +1550,7 @@ function parseCliArgs(args) {
       continue;
     }
 
-    if (arg === "--print-plan") {
+    if (arg === "--dry-run" || arg === "--print-plan") {
       options.printPlan = true;
       continue;
     }
@@ -1551,11 +1605,32 @@ function parseCliArgs(args) {
       continue;
     }
 
+    if (arg.startsWith("--log-file=")) {
+      const value = arg.slice("--log-file=".length).trim();
+      if (value) {
+        options.logFile = value;
+      } else {
+        warn("Ignoring empty --log-file value.");
+      }
+      continue;
+    }
+
     if (arg === "--config") {
       const next = args[index + 1];
       if (next) {
         options.configPath = next;
         index += 1;
+      }
+      continue;
+    }
+
+    if (arg === "--log-file") {
+      const next = args[index + 1];
+      if (next && !next.startsWith("--")) {
+        options.logFile = next.trim();
+        index += 1;
+      } else {
+        warn("--log-file requires a path.");
       }
       continue;
     }
@@ -1614,7 +1689,9 @@ const ROOT_CONFIG_KEYS = new Set([
   "backup",
   "adminGenerate",
   "continueOnHealthCheckFailure",
+  "dryRun",
   "printPlan",
+  "logFile",
   "skipBoostInstall",
   "startServer",
   "nonInteractive",
@@ -1680,6 +1757,7 @@ function validateInstallerConfig(config, label = "config", allowModeOverrides = 
     "backup",
     "adminGenerate",
     "continueOnHealthCheckFailure",
+    "dryRun",
     "printPlan",
     "skipBoostInstall",
     "startServer",
@@ -1695,12 +1773,16 @@ function validateInstallerConfig(config, label = "config", allowModeOverrides = 
     }
   });
 
-  const stringKeys = ["projectName", "appName", "projectPath"];
+  const stringKeys = ["projectName", "appName", "projectPath", "logFile"];
   stringKeys.forEach((key) => {
     if (config[key] !== undefined) {
       validateStringConfig(config[key], `${label}.${key}`);
     }
   });
+
+  if (config.logFile !== undefined && config.logFile.trim() === "") {
+    throw new Error(`${label}.logFile must not be empty.`);
+  }
 
   const arrayKeys = [
     "laravelFlags",
@@ -1826,10 +1908,16 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
   const requestedPreset = cliOptions.preset || fileConfig?.preset || "standard";
   const resolvedPreset = resolvePackagePresetName(requestedPreset);
   const nonInteractive = Boolean(cliOptions.nonInteractive || fileConfig?.nonInteractive === true);
+  const logFile = resolveLogFilePath(cliOptions.logFile, fileConfig?.logFile, configPath);
+  const printPlan = Boolean(
+    cliOptions.printPlan ||
+      fileConfig?.printPlan === true ||
+      fileConfig?.dryRun === true,
+  );
 
   return {
     nonInteractive,
-    printPlan: Boolean(cliOptions.printPlan || fileConfig?.printPlan === true),
+    printPlan,
     preset: resolvedPreset,
     continueOnHealthCheckFailure: Boolean(
       cliOptions.continueOnHealthCheckFailure ||
@@ -1843,6 +1931,7 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     allowDeleteAnyExisting: Boolean(
       cliOptions.allowDeleteAnyExisting || fileConfig?.allowDeleteAnyExisting === true,
     ),
+    logFile,
     skipBoostInstall: Boolean(
       cliOptions.skipBoostInstall ||
         fileConfig?.skipBoostInstall === true ||
@@ -1855,6 +1944,30 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     verbose: Boolean(cliOptions.verbose || fileConfig?.verbose === true),
     debug: Boolean(cliOptions.debug || fileConfig?.debug === true),
   };
+}
+
+function resolveLogFilePath(cliValue, configValue, configPath) {
+  const normalize = (value) => {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const cliPath = normalize(cliValue);
+  if (cliPath) {
+    return path.resolve(process.cwd(), cliPath);
+  }
+
+  const configPathValue = normalize(configValue);
+  if (!configPathValue) {
+    return null;
+  }
+
+  const baseDirectory = configPath ? path.dirname(configPath) : process.cwd();
+  return path.resolve(baseDirectory, configPathValue);
 }
 
 // Builds a mode-specific preset by merging root config with mode overrides.
@@ -2373,22 +2486,94 @@ function getOptionIndexesByIds(ids, fallback = []) {
 }
 
 // Executes a subprocess and resolves/rejects based on exit code.
+function appendOutputTail(current, chunk, limit = 12000) {
+  const combined = `${current}${chunk}`;
+  return combined.length > limit ? combined.slice(-limit) : combined;
+}
+
+function formatOutputSnippet(output, label) {
+  const sanitized = stripAnsi(output || "").trim();
+  if (!sanitized) {
+    return "";
+  }
+
+  const lines = sanitized.split(/\r?\n/);
+  const lastLines = lines.slice(-8).join("\n");
+  return `${label}:\n${lastLines}`;
+}
+
+function buildCommandFailureSnippet(error) {
+  const stdoutSnippet = formatOutputSnippet(error.stdout, "Last stdout");
+  const stderrSnippet = formatOutputSnippet(error.stderr, "Last stderr");
+  return [stdoutSnippet, stderrSnippet].filter(Boolean).join("\n\n");
+}
+
+function printCommandFailureSnippet(snippet) {
+  if (!snippet) {
+    return;
+  }
+
+  console.log("");
+  console.log(color("Recent command output:", C.bold + C.yellow));
+  console.log(snippet);
+  appendToRuntimeLog(`\nRecent command output:\n${snippet}\n`);
+}
+
 function runProcess(command, args, options = {}) {
-  const { cwd = process.cwd(), stdio = "inherit", env = process.env } = options;
+  const {
+    cwd = process.cwd(),
+    stdio = "inherit",
+    env = process.env,
+    interactive = false,
+    captureOutput = false,
+  } = options;
+  const shouldCapture = captureOutput && stdio === "inherit" && !interactive;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio, env });
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      stdio: shouldCapture ? ["inherit", "pipe", "pipe"] : stdio,
+    });
+    let stdout = "";
+    let stderr = "";
 
-    child.on("error", (error) => reject(error));
+    if (shouldCapture) {
+      if (child.stdout) {
+        child.stdout.on("data", (chunk) => {
+          const text = chunk.toString();
+          stdout = appendOutputTail(stdout, text);
+          process.stdout.write(chunk);
+          appendToRuntimeLog(text);
+        });
+      }
+
+      if (child.stderr) {
+        child.stderr.on("data", (chunk) => {
+          const text = chunk.toString();
+          stderr = appendOutputTail(stderr, text);
+          process.stderr.write(chunk);
+          appendToRuntimeLog(text);
+        });
+      }
+    }
+
+    child.on("error", (error) => {
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
     child.on("close", (code, signal) => {
       if (code === 0) {
-        resolve();
+        resolve({ stdout, stderr });
         return;
       }
 
       const error = new Error(`Command failed: ${command} ${args.join(" ")}`);
       error.exitCode = code;
       error.signal = signal;
+      error.stdout = stdout;
+      error.stderr = stderr;
       reject(error);
     });
   });
@@ -2412,6 +2597,8 @@ async function runCommand(command, args, options = {}) {
     warnOnFailure = true,
     env = process.env,
     stdio = "inherit",
+    interactive = false,
+    captureOutput = stdio === "inherit" && !interactive,
     redactedValues = [],
     successLabel = null,
   } = options;
@@ -2425,12 +2612,17 @@ async function runCommand(command, args, options = {}) {
   }
 
   try {
-    await runProcess(command, args, { cwd, env, stdio });
+    await runProcess(command, args, { cwd, env, stdio, interactive, captureOutput });
     ok(successLabel || `${command} ${args[0] ?? ""}`.trim());
     return { exitCode: 0, success: true };
   } catch (error) {
     const exitCode = error.exitCode || 1;
+    const failureMessage = `Command failed (exit ${exitCode}): ${cmdStr}`;
+    const failureSnippet = buildCommandFailureSnippet(error);
+
     if (required) {
+      error.message = failureMessage;
+      error.outputSnippet = failureSnippet;
       throw error;
     }
     if (warnOnFailure) {
@@ -2438,6 +2630,7 @@ async function runCommand(command, args, options = {}) {
     } else {
       info(`Command failed and will be skipped: ${cmdStr}`);
     }
+    printCommandFailureSnippet(failureSnippet);
     return { exitCode, success: false };
   }
 }
@@ -3144,6 +3337,8 @@ function printInstallPlan(config, runtimeOptions = state.runtime) {
   info(`Path type: ${describePathClassification(pathClassification)}`);
   info(`Path strategy: ${describeExistingPathStrategy(config.projectPath, runtimeOptions)}`);
   info(`Database: ${config.database.connection}`);
+  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
+  info(`Log file: ${runtimeOptions.logFile || "-"}`);
   info(`Laravel flags: ${formatList(config.laravelNewFlags)}`);
   info(`Normal packages: ${formatList(config.normalPackages)}`);
   info(`Dev packages: ${formatList(config.devPackages)}`);
@@ -3171,6 +3366,8 @@ function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
   section("Update Plan");
   info(`Project: ${projectDir}`);
   info(`Path type: ${describePathClassification(classifyExistingPath(projectDir))}`);
+  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
+  info(`Log file: ${runtimeOptions.logFile || "-"}`);
   info(`Detected packages: ${formatList([...packages].sort())}`);
   info(`Boost install: ${runtimeOptions.skipBoostInstall ? "skip" : "run interactively"}`);
   info(
@@ -4008,6 +4205,8 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
       await runCommand("php", ["artisan", "boost:install"], {
         cwd: config.projectPath,
         required: true,
+        interactive: true,
+        captureOutput: false,
       });
     }
   }
@@ -4068,7 +4267,12 @@ async function runUpdateFlow(projectDir) {
     } else {
       section("Install Boost");
       info("boost:install is interactive.");
-      await runCommand("php", ["artisan", "boost:install"], { cwd: projectDir, required: true });
+      await runCommand("php", ["artisan", "boost:install"], {
+        cwd: projectDir,
+        required: true,
+        interactive: true,
+        captureOutput: false,
+      });
     }
   } else {
     warn("laravel/boost is not installed. Skipping boost:install.");
@@ -4089,34 +4293,42 @@ async function runUpdateFlow(projectDir) {
 function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
   section("Done");
   ok("INSTALAR completed successfully.");
-  console.log(`\n  ${color("Project path:", C.bold)} ${projectPath}`);
-  console.log(`  ${color("Next steps:", C.bold)}`);
-  console.log(`  - ${color(`cd ${projectPath}`, C.cyan)}`);
-  console.log(`  - ${color("php artisan serve", C.cyan)}`);
+  const writeSummaryLine = (line = "") => {
+    console.log(line);
+    appendToRuntimeLog(`${stripAnsi(line)}\n`);
+  };
+
+  writeSummaryLine(`\n  ${color("Project path:", C.bold)} ${projectPath}`);
+  if (runtimeOptions.logFile) {
+    writeSummaryLine(`  ${color("Log file:", C.bold)} ${runtimeOptions.logFile}`);
+  }
+  writeSummaryLine(`  ${color("Next steps:", C.bold)}`);
+  writeSummaryLine(`  - ${color(`cd ${projectPath}`, C.cyan)}`);
+  writeSummaryLine(`  - ${color("php artisan serve", C.cyan)}`);
   if (!runtimeOptions.startServer) {
-    console.log(`  - ${color("composer run dev", C.cyan)}`);
+    writeSummaryLine(`  - ${color("composer run dev", C.cyan)}`);
   }
   if (state.boostInstallSkipped) {
-    console.log(`  - ${color("php artisan boost:install", C.cyan)}`);
+    writeSummaryLine(`  - ${color("php artisan boost:install", C.cyan)}`);
   }
 
   if (state.createdAdmin) {
-    console.log(`\n  ${color("Filament Admin:", C.bold + C.green)}`);
-    console.log(`  Name:     ${state.createdAdmin.name}`);
-    console.log(`  E-Mail:   ${state.createdAdmin.email}`);
+    writeSummaryLine(`\n  ${color("Filament Admin:", C.bold + C.green)}`);
+    writeSummaryLine(`  Name:     ${state.createdAdmin.name}`);
+    writeSummaryLine(`  E-Mail:   ${state.createdAdmin.email}`);
     if (state.createdAdmin.revealPassword) {
-      console.log(`  Password: ${state.createdAdmin.password}`);
+      writeSummaryLine(`  Password: ${state.createdAdmin.password}`);
     } else {
-      console.log("  Password: (hidden)");
+      writeSummaryLine("  Password: (hidden)");
       if (state.createdAdmin.passwordSource === "default") {
-        console.log("  Note:     Rotate the default password immediately.");
+        writeSummaryLine("  Note:     Rotate the default password immediately.");
       }
     }
   }
 
   if (state.warnings.length > 0) {
-    console.log(`\n  ${color("Warnings:", C.bold + C.yellow)}`);
-    state.warnings.forEach((entry) => console.log(`  - ${entry}`));
+    writeSummaryLine(`\n  ${color("Warnings:", C.bold + C.yellow)}`);
+    state.warnings.forEach((entry) => writeSummaryLine(`  - ${entry}`));
   }
 }
 
@@ -4414,7 +4626,12 @@ async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = sta
 
   section("Server Start");
   info(`Starting composer run dev in ${projectPath}`);
-  await runCommand("composer", ["run", "dev"], { cwd: projectPath, required: false });
+  await runCommand("composer", ["run", "dev"], {
+    cwd: projectPath,
+    required: false,
+    interactive: true,
+    captureOutput: false,
+  });
 }
 
 // Executes all final post-install steps in order.
@@ -4436,7 +4653,9 @@ function printNodeUsage() {
   console.log("Options:");
   console.log("  --config <file>         JSON configuration file (default: ./instalar.json)");
   console.log("  --non-interactive       No prompts, uses defaults/config");
-  console.log("  --print-plan            Collect input and print the resolved plan only");
+  console.log("  --dry-run               Resolve input, print the resolved plan, and exit");
+  console.log("  --print-plan            Legacy alias for --dry-run");
+  console.log("  --log-file <path>       Write installer output to a plain-text log file");
   console.log("  --preset <name>         Package preset: minimal, standard, or full");
   console.log("  --skip-boost-install    Skip interactive boost:install");
   console.log("  --continue-on-health-check-failure");
@@ -4472,18 +4691,25 @@ async function main() {
 
     loadedConfig = loaded.config;
     resolvedConfigPath = loaded.path;
-    info(`Loaded configuration: ${resolvedConfigPath}`);
   } else {
     const defaultConfigPath = path.resolve(process.cwd(), "instalar.json");
     if (fs.existsSync(defaultConfigPath)) {
       const loaded = loadInstallerConfig(defaultConfigPath);
       loadedConfig = loaded.config || {};
       resolvedConfigPath = loaded.path;
-      info(`Loaded configuration: ${resolvedConfigPath}`);
     }
   }
 
   state.runtime = resolveRuntime(cliOptions, loadedConfig, resolvedConfigPath);
+  initializeRuntimeLog();
+
+  if (state.runtime.logFile) {
+    info(`Writing installer log to: ${state.runtime.logFile}`);
+  }
+
+  if (resolvedConfigPath) {
+    info(`Loaded configuration: ${resolvedConfigPath}`);
+  }
 
   if (!state.runtime.nonInteractive && !process.stdin.isTTY) {
     throw new Error(
@@ -4600,6 +4826,9 @@ async function main() {
 main().catch((error) => {
   section("Error");
   fail(error.message || String(error));
+  if (error.outputSnippet) {
+    printCommandFailureSnippet(error.outputSnippet);
+  }
   process.exitCode = 1;
 });
 NODE
@@ -4611,7 +4840,8 @@ if (( BASH_HAS_TTY == 1 )); then
 fi
 
 # Execute embedded Node phase with original CLI args.
-if node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
+if INSTALAR_SCRIPT_VERSION="${SCRIPT_VERSION}" INSTALAR_SCRIPT_CODENAME="${SCRIPT_CODENAME}" \
+  node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
   exit 0
 else
   exit $?
