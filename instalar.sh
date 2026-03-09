@@ -289,10 +289,10 @@ ask_yes_no() {
     fi
 
     case "${answer}" in
-      j|ja|y|yes)
+      y|yes)
         return 0
         ;;
-      n|nein|no)
+      n|no)
         return 1
         ;;
       *)
@@ -1883,6 +1883,9 @@ function validateInstallerConfig(config, label = "config", allowModeOverrides = 
   }
 }
 
+// =============================================================================
+// Config Parsing and Runtime Resolution
+// =============================================================================
 // Loads installer JSON config from disk and validates top-level shape.
 function loadInstallerConfig(configPath) {
   const resolvedPath = path.resolve(process.cwd(), configPath);
@@ -1904,6 +1907,8 @@ function loadInstallerConfig(configPath) {
 
 // Resolves runtime settings by merging CLI options with JSON config values.
 function resolveRuntime(cliOptions, fileConfig, configPath) {
+  // CLI values always win, but config can still provide defaults for unattended runs.
+  // dryRun is treated as a backwards-compatible alias for printPlan.
   const resolvedMode = (cliOptions.mode || fileConfig?.mode || "").toLowerCase() || null;
   const requestedPreset = cliOptions.preset || fileConfig?.preset || "standard";
   const resolvedPreset = resolvePackagePresetName(requestedPreset);
@@ -1947,6 +1952,8 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
 }
 
 function resolveLogFilePath(cliValue, configValue, configPath) {
+  // A CLI path is resolved from the current shell directory. A config path is
+  // resolved from the config file location so checked-in examples stay portable.
   const normalize = (value) => {
     if (typeof value !== "string") {
       return null;
@@ -1970,6 +1977,7 @@ function resolveLogFilePath(cliValue, configValue, configPath) {
   return path.resolve(baseDirectory, configPathValue);
 }
 
+// Mode presets inherit root config and then layer mode-specific overrides on top.
 // Builds a mode-specific preset by merging root config with mode overrides.
 function getModePreset(mode) {
   const rootConfig = state.runtime.config || {};
@@ -2010,6 +2018,8 @@ function collectPackageSpecsFromChoiceIds(choiceIds = []) {
   const dev = [];
 
   choiceIds.forEach((choiceId) => {
+    // Unknown IDs should not abort the whole install because they can come from
+    // stale local config files after the optional package catalog changes.
     const choice = OPTIONAL_PACKAGE_CHOICES.find((item) => item.id === choiceId);
     if (!choice) {
       warn(`Unknown optional package id in preset/config: ${choiceId}`);
@@ -2031,6 +2041,9 @@ function collectPackageSpecsFromChoiceIds(choiceIds = []) {
   };
 }
 
+// =============================================================================
+// Prompt Helpers
+// =============================================================================
 // Creates a random alphanumeric password used for generated admin credentials.
 function generateAdminPassword(length = 20) {
   return crypto
@@ -2070,6 +2083,8 @@ async function askSecret(question, defaultValue = "") {
   }
 
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
+    // This fallback keeps the installer usable in limited terminals, but it is
+    // intentionally noisy because the secret will be visible as plain text.
     warn(`Secret prompt fallback is visible for: ${question}`);
     return ask(question, defaultValue);
   }
@@ -2140,7 +2155,7 @@ async function askRequired(question, defaultValue = "") {
   }
 }
 
-// Prompts for a yes/no answer with localized aliases.
+// Prompts for a yes/no answer using English-only aliases.
 async function askYesNo(question, defaultYes = true) {
   if (state.runtime.nonInteractive) {
     info(`[non-interactive] ${question}: ${defaultYes ? "yes" : "no"}`);
@@ -2153,10 +2168,10 @@ async function askYesNo(question, defaultYes = true) {
     if (!answer) {
       return defaultYes;
     }
-    if (["j", "ja", "y", "yes"].includes(answer)) {
+    if (["y", "yes"].includes(answer)) {
       return true;
     }
-    if (["n", "nein", "no"].includes(answer)) {
+    if (["n", "no"].includes(answer)) {
       return false;
     }
     warn("Please answer with y or n.");
@@ -2362,6 +2377,9 @@ async function askMultiChoiceInteractive(question, options, defaultIndexes = [])
   });
 }
 
+// =============================================================================
+// Package and Flag Normalization
+// =============================================================================
 // Converts arbitrary app names to URL/path-safe slugs.
 function slugify(value) {
   return value
@@ -2424,6 +2442,8 @@ function normalizeLaravelFlags(
   fallback = ["--npm", "--livewire", "--boost", "--pest"],
   preferredTestSuite = null,
 ) {
+  // Startup flags and test-suite flags follow different rules: the installer
+  // keeps every unique startup flag but collapses the test suite to exactly one.
   const validStartupFlags = new Set(["--npm", "--livewire", "--boost"]);
   const startupFlags = [];
   let testSuiteFlag = normalizeLaravelTestSuiteFlag(preferredTestSuite);
@@ -2470,7 +2490,7 @@ function getOptionIndexesByIds(ids, fallback = []) {
     return [...fallback];
   }
 
-  if (ids.includes("all") || ids.includes("*") || ids.includes("Alles")) {
+  if (ids.includes("all") || ids.includes("*")) {
     return OPTIONAL_PACKAGE_CHOICES.map((_, index) => index);
   }
 
@@ -2485,6 +2505,9 @@ function getOptionIndexesByIds(ids, fallback = []) {
   return indexes.length > 0 ? indexes : [...fallback];
 }
 
+// =============================================================================
+// Command Execution and Logging
+// =============================================================================
 // Executes a subprocess and resolves/rejects based on exit code.
 function appendOutputTail(current, chunk, limit = 12000) {
   const combined = `${current}${chunk}`;
@@ -2527,6 +2550,8 @@ function runProcess(command, args, options = {}) {
     interactive = false,
     captureOutput = false,
   } = options;
+  // Output capture is only safe when the command uses inherited stdio and does
+  // not need interactive control of the terminal.
   const shouldCapture = captureOutput && stdio === "inherit" && !interactive;
 
   return new Promise((resolve, reject) => {
@@ -2541,6 +2566,8 @@ function runProcess(command, args, options = {}) {
     if (shouldCapture) {
       if (child.stdout) {
         child.stdout.on("data", (chunk) => {
+          // Mirror captured output back to the terminal so live progress stays
+          // visible while still retaining the tail for failure reporting.
           const text = chunk.toString();
           stdout = appendOutputTail(stdout, text);
           process.stdout.write(chunk);
@@ -2621,6 +2648,8 @@ async function runCommand(command, args, options = {}) {
     const failureSnippet = buildCommandFailureSnippet(error);
 
     if (required) {
+      // Required failures bubble up with an attached snippet so the top-level
+      // error handler can print actionable context without re-running anything.
       error.message = failureMessage;
       error.outputSnippet = failureSnippet;
       throw error;
@@ -2635,6 +2664,9 @@ async function runCommand(command, args, options = {}) {
   }
 }
 
+// =============================================================================
+// Path Safety and Filesystem Helpers
+// =============================================================================
 // Checks if an Artisan command exists in the current project.
 async function artisanCommandExists(projectDir, commandName) {
   try {
@@ -2725,6 +2757,8 @@ function classifyExistingPath(targetPath) {
   return "generic-nonempty";
 }
 
+// Human-readable labels keep plan output and error messages aligned with the
+// internal path-safety classifier used by install and update flows.
 function describePathClassification(classification) {
   switch (classification) {
     case "missing":
@@ -2817,6 +2851,9 @@ function backupExistingPath(sourcePath) {
   }
 }
 
+// =============================================================================
+// Environment and Project Metadata Helpers
+// =============================================================================
 // Escapes an environment value when quoting is required.
 function envSafeValue(value) {
   const text = String(value);
@@ -2856,6 +2893,8 @@ function applyEnvConfig(projectDir, config) {
   env = setEnvValue(env, "APP_NAME", config.appName);
 
   if (config.database.connection === "sqlite") {
+    // Laravel expects a real sqlite file even when the database path is stored
+    // as a relative value inside .env.
     const sqliteFile = path.join(projectDir, "database", "database.sqlite");
     fs.mkdirSync(path.dirname(sqliteFile), { recursive: true });
     fs.closeSync(fs.openSync(sqliteFile, "a"));
@@ -2876,6 +2915,8 @@ function applyEnvConfig(projectDir, config) {
   fs.writeFileSync(envPath, env, "utf8");
 }
 
+// Parses PHP use-statements so auth config entries like User::class can be
+// resolved back to fully-qualified class names before the bootstrap script runs.
 function parseImportedClasses(source) {
   const imports = new Map();
   const pattern = /^use\s+([^;]+?)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gm;
@@ -2911,6 +2952,8 @@ function resolveAuthUserModel(projectDir) {
         return modelClass;
       }
 
+      // Imported aliases are common in modern auth configs, so the installer
+      // must expand them before passing the model into the temporary PHP runner.
       return importedClasses.get(modelClass) || `App\\Models\\${modelClass}`;
     }
   }
@@ -2992,6 +3035,9 @@ function cleanupDuplicateTwoFactorMigrations(projectDir) {
   return removed;
 }
 
+// =============================================================================
+// Interactive Config Collection
+// =============================================================================
 // Collects auto-mode installation config from prompts and presets.
 async function collectAutoConfig(preset = {}) {
   section("Auto Mode");
@@ -3035,6 +3081,8 @@ async function collectAutoConfig(preset = {}) {
     preset.testSuite,
   );
 
+  // Auto mode keeps the experience intentionally opinionated: database defaults,
+  // preset-driven packages, and optional generated credentials if requested.
   const createAdmin = preset.createAdmin !== undefined ? Boolean(preset.createAdmin) : true;
   const admin = resolveAdminCredentials(preset, createAdmin);
 
@@ -3153,6 +3201,8 @@ async function collectManualConfig(preset = {}) {
     defaultOptionalIndexes,
   );
 
+  // Boost is always installed in manual mode because later setup and plan output
+  // assume it is part of the baseline toolchain alongside Filament.
   const normalPackages = ["filament/filament:^5.0", "laravel/boost"];
   const devPackages = [];
 
@@ -3205,6 +3255,8 @@ async function collectManualConfig(preset = {}) {
   };
 }
 
+// Resolves how admin credentials should be sourced without exposing configured
+// secrets in the plan or final summary output.
 function resolveAdminCredentials(preset = {}, createAdmin = true) {
   const configuredPassword =
     typeof preset?.admin?.password === "string" ? preset.admin.password : "";
@@ -3249,6 +3301,9 @@ function resolveAdminCredentials(preset = {}, createAdmin = true) {
   };
 }
 
+// =============================================================================
+// Plan Rendering
+// =============================================================================
 // Converts normalized config package specs into a fast lookup Set.
 function packageSetFromConfig(config) {
   const names = new Set();
@@ -3383,8 +3438,13 @@ function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
   }
 }
 
+// =============================================================================
+// Source Rewriting Helpers
+// =============================================================================
 // Extracts an object property block (e.g. server: { ... }) from source text.
 function extractObjectPropertyBlock(source, propertyName) {
+  // This is a narrow brace matcher, not a general JavaScript parser. It only
+  // targets simple vite.config.js shapes that the installer knows how to rewrite.
   const propertyIndex = source.indexOf(`${propertyName}:`);
   if (propertyIndex === -1) {
     return "";
@@ -3435,6 +3495,9 @@ function indentLines(value, spaces) {
     .join("\n");
 }
 
+// =============================================================================
+// Nwidart / Modules Automation
+// =============================================================================
 // Ensures composer plugin allow-list contains wikimedia/composer-merge-plugin.
 async function ensureComposerPluginAllowList(projectDir, packages) {
   const needsMergePlugin =
@@ -3474,6 +3537,8 @@ async function ensureComposerPluginAllowList(projectDir, packages) {
     const composerJson = JSON.parse(fs.readFileSync(composerPath, "utf8"));
     let changed = false;
 
+    // Composer config can be absent or malformed in freshly generated projects,
+    // so each container is rebuilt defensively before the plugin flag is set.
     if (
       !composerJson.config ||
       typeof composerJson.config !== "object" ||
@@ -3534,6 +3599,8 @@ async function ensureNwidartComposerMergeConfig(projectDir, packages) {
   let removedLegacyModulesAutoload = false;
   let addedMergePluginInclude = false;
 
+  // Older setups may still autoload the top-level Modules namespace directly.
+  // The merge-plugin layout replaces that with per-module composer files.
   if (
     composerJson.autoload &&
     composerJson.autoload["psr-4"] &&
@@ -3626,6 +3693,8 @@ async function ensureNwidartViteMainConfig(projectDir, packages) {
     currentConfig.includes("@tailwindcss/vite") || currentConfig.includes("tailwindcss(");
   const serverBlock = extractObjectPropertyBlock(currentConfig, "server");
 
+  // The replacement keeps the common server block and optional Tailwind plugin,
+  // but swaps the fixed asset list for the Nwidart-aware collector.
   const nextConfig = [
     "import { defineConfig } from 'vite';",
     "import laravel from 'laravel-vite-plugin';",
@@ -3770,7 +3839,7 @@ function getNwidartSetupStatus(projectDir) {
       legacyModulesAutoloadRemoved =
         !Object.prototype.hasOwnProperty.call(composerJson.autoload?.["psr-4"] ?? {}, "Modules\\");
     } catch {
-      // keep defaults
+      // Keep defaults; the summary should report missing invariants instead of crashing.
     }
   }
 
@@ -3806,7 +3875,7 @@ function printNwidartSetupSummary(projectDir, packages) {
     status.modulesDirectoryPresent;
 
   if (ready) {
-    ok("Nwidart Setup komplett (plugins + merge + vite)");
+    ok("Nwidart setup complete (plugins + merge + vite)");
     return;
   }
 
@@ -3833,6 +3902,8 @@ function printNwidartSetupSummary(projectDir, packages) {
   warn(`Nwidart setup incomplete: ${missing.join(", ")}`);
 }
 
+// Generates a temporary PHP bootstrap script so the installer can create the
+// Filament admin user without exposing the password in process arguments.
 function buildFilamentAdminBootstrapScript() {
   return [
     "<?php",
@@ -3887,6 +3958,8 @@ async function createFilamentAdminUser(projectDir, config) {
   fs.writeFileSync(tempRunnerPath, buildFilamentAdminBootstrapScript(), "utf8");
 
   try {
+    // Secrets travel through environment variables here so they can still be
+    // redacted from command logs while remaining available to the PHP script.
     const result = await runCommand("php", [tempRunnerPath], {
       cwd: projectDir,
       required: false,
@@ -3917,10 +3990,15 @@ async function createFilamentAdminUser(projectDir, config) {
   }
 }
 
+// =============================================================================
+// Install and Update Flows
+// =============================================================================
 // Runs package-specific setup commands, migrations, and optional admin creation.
 async function runSetupCommands(projectDir, packages, config) {
   section("Setup Commands");
 
+  // Key generation is safe to attempt on every run because Laravel will simply
+  // rewrite the key in the current .env when the command succeeds.
   await runCommand("php", ["artisan", "key:generate", "--force", "--no-interaction"], {
     cwd: projectDir,
     required: false,
@@ -4082,6 +4160,8 @@ async function runSetupCommands(projectDir, packages, config) {
 
 // Runs full installation workflow for new projects.
 async function runInstallFlow(config, runtimeOptions = state.runtime) {
+  // The printed plan doubles as the source of truth for unattended runs, so the
+  // workflow always resolves the package set from the same config object first.
   const packageSet = printInstallPlan(config, runtimeOptions);
 
   if (!runtimeOptions.nonInteractive) {
@@ -4185,6 +4265,8 @@ async function runInstallFlow(config, runtimeOptions = state.runtime) {
   }
 
   if (await ensureNwidartComposerMergeConfig(config.projectPath, packageSet)) {
+    // Composer needs a refresh when module-level composer.json files were wired
+    // in after the initial require step.
     await runCommand("composer", ["dump-autoload", "--no-interaction"], {
       cwd: config.projectPath,
       required: false,
@@ -4289,6 +4371,9 @@ async function runUpdateFlow(projectDir) {
   await runCommand("npm", ["run", "build"], { cwd: projectDir, required: true });
 }
 
+// =============================================================================
+// Final Checks and Entrypoint
+// =============================================================================
 // Prints final success output including admin credentials and accumulated warnings.
 function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
   section("Done");
@@ -4359,6 +4444,8 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
   };
 
   const healthChecks = [
+    // A small declarative list keeps the summary, override handling, and future
+    // health-check additions consistent across install and update flows.
     {
       name: "APP_KEY",
       run: async () => {
@@ -4721,6 +4808,8 @@ async function main() {
   const hasLaravelProject = isLaravelProject(cwd);
   let mode = state.runtime.mode;
 
+  // Unattended runs must never stall waiting for a mode choice, so the current
+  // working directory decides between update and auto-install when mode is unset.
   if (!mode && state.runtime.nonInteractive) {
     mode = hasLaravelProject ? "update" : "auto";
     info(`[non-interactive] No mode set, using: ${mode}`);
