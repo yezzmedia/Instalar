@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.10"
+SCRIPT_VERSION="0.1.11"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================

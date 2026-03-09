@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.10** (Rosie)
+Current version: **0.1.11** (Rosie)
 
 ---
 
@@ -174,6 +174,7 @@ Help:
 - DB passwords are treated as secrets:
   - interactive prompts are masked
   - non-interactive logs print `(hidden)` instead of the value
+- Interactive confirmation prompts use English answers: `y`, `yes`, `n`, `no`.
 - Generated admin passwords are shown once at the end of the run.
 - Configured or default admin passwords are never printed back to the terminal.
 - Non-interactive path replacement is stricter:
@@ -366,6 +367,9 @@ Optional afterward:
   - Interactive mode: installer asks for confirmation.
   - Non-interactive mode: use `--allow-delete-existing` for empty/Laravel paths, or `--allow-delete-any-existing` for generic/Git paths, optionally `--backup`.
 
+- **`node --test` discovers browser tests from a local sample app**
+  - Keep local generated example apps in a dot-prefixed directory inside the repo, or run `node --test tests/*.cjs` explicitly.
+
 ---
 
 ## Quality Gates
@@ -374,7 +378,7 @@ Optional afterward:
   - `bash -n instalar.sh`
   - `shellcheck instalar.sh`
   - `./instalar.sh --help`
-  - `node --test tests/*.cjs`
+  - `node --test`
 - Tag pushes matching `v*` validate release metadata and create/update a GitHub draft release from the latest changelog section.
 
 ---

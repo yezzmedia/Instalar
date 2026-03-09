@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11] - 2026-03-09 (Rosie)
+
+### Added
+
+- Comment-focused coverage for prompt-driven config collection, normalization helpers, and Nwidart rewrite helpers
+
+### Changed
+
+- Normalized the remaining installer prompts, comments, and documentation to English-only wording
+- Expanded inline installer comments around runtime resolution, command execution, path safety, env mutation, and setup orchestration
+- Restored `node --test` as the primary documented quality gate while keeping the explicit `tests/*.cjs` fallback for local sample apps
+
+### Fixed
+
+- Ignore dot-prefixed local sample app directories used to keep Node test discovery clean
+- Align CI workflow expectations with the documented default Node test command
+
 ## [0.1.10] - 2026-03-09 (Rosie)
 
 ### Added
@@ -147,7 +164,7 @@ All notable changes to this project will be documented in this file.
 - Bash entrypoint with interactive dependency verification and version table.
 - Missing dependency install flow and update flow with available-version preview.
 - Non-interactive mode with JSON config support (`--non-interactive`, `--config`).
-- Manual mode multi-select UX with arrows + space + enter, including "Alles auswaehlen".
+- Manual mode multi-select UX with arrows + space + enter, including "Select all".
 - Existing target directory delete confirmation before project creation.
 - Optional backup flow for existing directories (`--backup`).
 - Optional generated admin password (`--admin-generate`).
