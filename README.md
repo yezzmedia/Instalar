@@ -374,7 +374,7 @@ Optional afterward:
   - `bash -n instalar.sh`
   - `shellcheck instalar.sh`
   - `./instalar.sh --help`
-  - `node --test`
+  - `node --test tests/*.cjs`
 - Tag pushes matching `v*` validate release metadata and create/update a GitHub draft release from the latest changelog section.
 
 ---
