@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
@@ -184,4 +185,81 @@ test("embedded node phase receives release metadata from the bash entrypoint", (
     installerSource,
     /INSTALAR_SCRIPT_VERSION="\$\{SCRIPT_VERSION\}" INSTALAR_SCRIPT_CODENAME="\$\{SCRIPT_CODENAME\}"[^\n]*\\\n\s*node "\$\{NODE_TMP\}"/,
   );
+});
+
+test("main prints the grouped manual dry-run review from config in non-interactive mode", async () => {
+  const harness = loadInstallerHarness();
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-main-"));
+  const configPath = path.join(configDir, "instalar.json");
+  const sections = [];
+  const subsections = [];
+  const details = [];
+  const oks = [];
+
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        mode: "manual",
+        projectName: "CLI Review App",
+        projectPath: "./cli-review-app",
+        database: {
+          connection: "sqlite",
+        },
+        preset: "standard",
+        createAdmin: false,
+        gitInit: false,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  harness.process.argv = [
+    "node",
+    "instalar.sh",
+    "--mode",
+    "manual",
+    "--non-interactive",
+    "--dry-run",
+    "--config",
+    configPath,
+  ];
+  harness.setSection((title) => {
+    sections.push(title);
+  });
+  harness.setSubsection((title) => {
+    subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    details.push(message);
+  });
+  harness.setInfo(() => {});
+  harness.setOk((message) => {
+    oks.push(message);
+  });
+
+  await harness.main();
+
+  assert.deepEqual(sections, [
+    "Step 1/6 - Project Basics",
+    "Step 2/6 - Database",
+    "Step 3/6 - Laravel Starter",
+    "Step 4/6 - Packages",
+    "Step 5/6 - Admin and Git",
+    "Installation Plan",
+  ]);
+  assert.deepEqual(subsections, [
+    "Project",
+    "Database",
+    "Starter",
+    "Packages",
+    "Normal Packages",
+    "Dev Packages",
+    "Admin and Git",
+    "Runtime",
+  ]);
+  assert.ok(details.some((message) => /Name:\s+CLI Review App$/.test(message)));
+  assert.ok(oks.includes("Plan preview only. No project files will be modified."));
 });

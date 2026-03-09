@@ -12,11 +12,13 @@ const {
 function createDoctorHarness(runtimeOverrides = {}) {
   const harness = loadInstallerHarness();
   const events = {
+    details: [],
     failures: [],
     infos: [],
     oks: [],
     prompts: [],
     sections: [],
+    subsections: [],
     warnings: [],
   };
 
@@ -29,6 +31,12 @@ function createDoctorHarness(runtimeOverrides = {}) {
   harness.state.warnings.length = 0;
   harness.setSection((title) => {
     events.sections.push(title);
+  });
+  harness.setSubsection((title) => {
+    events.subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
   });
   harness.setInfo((message) => {
     events.infos.push(message);
@@ -94,9 +102,10 @@ test("runDoctorFlow succeeds when health and permission checks pass", async () =
   assert.equal(success, true);
   assert.deepEqual(events.failures, []);
   assert.ok(events.oks.includes("Doctor found no remaining issues."));
-  assert.ok(events.infos.includes(`Project: ${projectPath}`));
-  assert.ok(events.infos.includes("Detected packages: laravel/framework"));
-  assert.ok(events.infos.includes("Repair prompts: enabled for safe fixes"));
+  assert.ok(events.details.includes("Inspect the current Laravel project and only offer narrow, safe repairs."));
+  assert.ok(events.details.some((message) => message.endsWith(projectPath)));
+  assert.ok(events.details.includes("- laravel/framework"));
+  assert.ok(events.details.some((message) => /Repair prompts:\s+enabled for safe fixes$/.test(message)));
 });
 
 test("runDoctorFlow repairs a missing storage link interactively", async () => {
@@ -128,7 +137,7 @@ test("runDoctorFlow repairs a missing storage link interactively", async () => {
   assert.equal(success, true);
   assert.deepEqual(events.prompts, [{ question: "Create storage link now?", defaultYes: true }]);
   assert.ok(events.oks.includes("Storage link created successfully"));
-  assert.ok(events.infos.includes("Repairs applied: 1"));
+  assert.ok(events.details.some((message) => /Repairs applied:\s+1$/.test(message)));
 });
 
 test("runDoctorFlow stays report-only in dry-run mode and returns false when issues remain", async () => {
@@ -154,7 +163,8 @@ test("runDoctorFlow stays report-only in dry-run mode and returns false when iss
   assert.equal(success, false);
   assert.ok(events.warnings.includes("Storage link missing"));
   assert.ok(events.failures.includes("Doctor found unresolved issues: Storage link"));
-  assert.ok(events.infos.includes("Repair prompts: disabled"));
+  assert.ok(events.details.some((message) => /Repair prompts:\s+disabled$/.test(message)));
+  assert.ok(events.subsections.includes("Unresolved Issues"));
 });
 
 test("runDoctorFlow prints nwidart status only when the package is installed", async () => {
