@@ -1161,6 +1161,8 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const readline = require("node:readline/promises");
 const readlineCore = require("node:readline");
+const SCRIPT_VERSION = process.env.INSTALAR_SCRIPT_VERSION || "0.0.0";
+const SCRIPT_CODENAME = process.env.INSTALAR_SCRIPT_CODENAME || "Unknown";
 
 // =============================================================================
 // Console Styling
@@ -4838,7 +4840,8 @@ if (( BASH_HAS_TTY == 1 )); then
 fi
 
 # Execute embedded Node phase with original CLI args.
-if node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
+if INSTALAR_SCRIPT_VERSION="${SCRIPT_VERSION}" INSTALAR_SCRIPT_CODENAME="${SCRIPT_CODENAME}" \
+  node "${NODE_TMP}" "$@" < "${NODE_STDIN}"; then
   exit 0
 else
   exit $?

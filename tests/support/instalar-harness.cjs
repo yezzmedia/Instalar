@@ -36,9 +36,7 @@ function readInstallerShellMetadata() {
 
 function loadInstallerHarness() {
   const metadata = readInstallerShellMetadata();
-  const source = `const SCRIPT_VERSION = ${JSON.stringify(metadata.version)};
-const SCRIPT_CODENAME = ${JSON.stringify(metadata.codename)};
-${extractEmbeddedNodeSource()}
+  const source = `${extractEmbeddedNodeSource()}
 globalThis.__instalarTest = {
   state,
   parseCliArgs,
@@ -72,7 +70,11 @@ globalThis.__instalarTest = {
 `;
 
   const fakeProcess = {
-    env: process.env,
+    env: {
+      ...process.env,
+      INSTALAR_SCRIPT_VERSION: metadata.version,
+      INSTALAR_SCRIPT_CODENAME: metadata.codename,
+    },
     argv: [],
     stdin: { isTTY: false },
     stdout: { isTTY: false, write() {} },

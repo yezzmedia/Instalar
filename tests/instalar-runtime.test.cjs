@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
@@ -144,5 +145,23 @@ test("validateInstallerConfig rejects unknown keys and invalid nested values", (
   assert.throws(
     () => harness.validateInstallerConfig({ dryRun: "yes" }),
     /config\.dryRun must be a boolean/,
+  );
+});
+
+test("embedded node phase receives release metadata from the bash entrypoint", () => {
+  const installerPath = path.join(__dirname, "..", "instalar.sh");
+  const installerSource = fs.readFileSync(installerPath, "utf8");
+
+  assert.match(
+    installerSource,
+    /const SCRIPT_VERSION = process\.env\.INSTALAR_SCRIPT_VERSION \|\| "0\.0\.0";/,
+  );
+  assert.match(
+    installerSource,
+    /const SCRIPT_CODENAME = process\.env\.INSTALAR_SCRIPT_CODENAME \|\| "Unknown";/,
+  );
+  assert.match(
+    installerSource,
+    /INSTALAR_SCRIPT_VERSION="\$\{SCRIPT_VERSION\}" INSTALAR_SCRIPT_CODENAME="\$\{SCRIPT_CODENAME\}"[^\n]*\\\n\s*node "\$\{NODE_TMP\}"/,
   );
 });
