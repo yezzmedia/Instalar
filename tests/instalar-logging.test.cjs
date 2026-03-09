@@ -5,9 +5,11 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
+const { readInstallerMetadata } = require("./support/instalar-metadata.cjs");
 
 test("runCommand writes plain-text run metadata to the runtime log", async () => {
   const harness = loadInstallerHarness();
+  const metadata = readInstallerMetadata();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-log-"));
   const logFile = path.join(tempDir, "instalar.log");
 
@@ -39,7 +41,10 @@ test("runCommand writes plain-text run metadata to the runtime log", async () =>
   assert.ok(
     harness.state.warnings.some((message) => message.includes("Command failed and will be skipped")),
   );
-  assert.match(logContent, /INSTALAR 0\.1\.10 \(Rosie\)/);
+  assert.match(
+    logContent,
+    new RegExp(`INSTALAR ${metadata.version.replaceAll(".", "\\.")} \\(${metadata.codename}\\)`),
+  );
   assert.match(logContent, /Run: node -e console\.log\('hello from stdout'\)/);
   assert.match(logContent, /Run: node -e console\.error\('boom from stderr'\); process\.exit\(3\);/);
   assert.match(logContent, /Command failed and will be skipped/);

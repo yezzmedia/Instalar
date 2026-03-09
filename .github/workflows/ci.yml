@@ -32,4 +32,4 @@ jobs:
         run: ./instalar.sh --help
 
       - name: Run Node-based installer tests
-        run: node --test tests/*.cjs
+        run: node --test
