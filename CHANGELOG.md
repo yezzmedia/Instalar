@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12] - 2026-03-09 (Rosie)
+
+### Added
+
+- `doctor` mode for auditing the current Laravel project with a focused health and permission report
+- Interactive Doctor-mode repair support for a missing `public/storage` symlink
+- Doctor-focused regression coverage for report-only runs, safe repairs, ignored install-only settings, and Nwidart status reporting
+
+### Changed
+
+- Refactored health checks and permission checks into reusable diagnostics building blocks shared by install, update, and Doctor mode
+- Help output and README now document `--mode doctor` and its report-only behavior in unattended runs
+
+### Fixed
+
+- Keep Doctor mode read-only in `--non-interactive` and `--dry-run` runs by suppressing repair prompts
+- Return a non-zero exit code from Doctor mode when unresolved issues remain
+
 ## [0.1.11] - 2026-03-09 (Rosie)
 
 ### Added

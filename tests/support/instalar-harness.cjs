@@ -45,6 +45,7 @@ globalThis.__instalarTest = {
   validateInstallerConfig,
   resolveRuntime,
   resolveLogFilePath,
+  warnDoctorModeIgnoredOptions,
   resolvePackagePresetName,
   getPackagePresetById,
   ask,
@@ -64,6 +65,8 @@ globalThis.__instalarTest = {
   setEnvValue,
   applyEnvConfig,
   resolveAuthUserModel,
+  readComposerPackages,
+  isLaravelProject,
   classifyExistingPath,
   describePathClassification,
   canDeleteExistingPathNonInteractive,
@@ -86,8 +89,10 @@ globalThis.__instalarTest = {
   collectManualConfig,
   printInstallPlan,
   printUpdatePlan,
+  runPermissionChecks,
   runCommand,
   runHealthChecks,
+  runDoctorFlow,
   setRunCommand(value) { runCommand = value; },
   setAsk(value) { ask = value; },
   setAskRequired(value) { askRequired = value; },
@@ -141,8 +146,25 @@ globalThis.__instalarTest = {
 function createProjectFixture() {
   const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-health-check-"));
 
+  fs.mkdirSync(path.join(projectPath, "bootstrap"), { recursive: true });
+  fs.mkdirSync(path.join(projectPath, "bootstrap", "cache"), { recursive: true });
   fs.mkdirSync(path.join(projectPath, "public", "build"), { recursive: true });
   fs.mkdirSync(path.join(projectPath, "storage", "app", "public"), { recursive: true });
+  fs.writeFileSync(path.join(projectPath, "artisan"), "#!/usr/bin/env php\n", "utf8");
+  fs.writeFileSync(path.join(projectPath, "bootstrap", "app.php"), "<?php\n", "utf8");
+  fs.writeFileSync(
+    path.join(projectPath, "composer.json"),
+    JSON.stringify(
+      {
+        require: {
+          "laravel/framework": "^12.0",
+        },
+      },
+      null,
+      4,
+    ),
+    "utf8",
+  );
   fs.writeFileSync(
     path.join(projectPath, ".env"),
     "APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",

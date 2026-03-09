@@ -38,6 +38,13 @@ test("parseCliArgs accepts aliases, dry-run, and explicit assignment forms", () 
   assert.equal(options.debug, true);
 });
 
+test("parseCliArgs accepts doctor mode", () => {
+  const harness = loadInstallerHarness();
+  const options = harness.parseCliArgs(["--mode=doctor"]);
+
+  assert.equal(options.mode, "doctor");
+});
+
 test("parseCliArgs accepts separated preset values", () => {
   const harness = loadInstallerHarness();
   const options = harness.parseCliArgs(["--preset", "minimal", "--log-file", "instalar.log"]);
@@ -57,5 +64,5 @@ test("parseCliArgs resets invalid modes and emits a warning", () => {
   const options = harness.parseCliArgs(["--mode=broken"]);
 
   assert.equal(options.mode, null);
-  assert.deepEqual(warnings, ["Invalid --mode value: broken. Use auto, manual, or update."]);
+  assert.deepEqual(warnings, ["Invalid --mode value: broken. Use auto, manual, update, or doctor."]);
 });

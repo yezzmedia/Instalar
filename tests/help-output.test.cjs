@@ -21,6 +21,7 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /--skip-boost-install/);
   assert.match(output, /--allow-delete-any-existing/);
   assert.match(output, /--continue-on-health-check-failure/);
+  assert.match(output, /--mode <auto\|manual\|update\|doctor>/);
   assert.match(output, /Resolve input, print the plan, and exit without modifying files/);
   assert.match(output, /Legacy alias for --dry-run/);
   assert.match(output, /Write installer output to a plain-text log file/);

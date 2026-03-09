@@ -90,6 +90,25 @@ test("runtime prefers explicit CLI mode and preserves other config flags", () =>
   assert.equal(runtime.backup, true);
 });
 
+test("runtime accepts doctor mode from config and preserves supported runtime flags", () => {
+  const harness = loadInstallerHarness();
+
+  const runtime = harness.resolveRuntime(
+    harness.parseCliArgs(["--log-file", "doctor.log"]),
+    {
+      mode: "doctor",
+      dryRun: true,
+      verbose: true,
+    },
+    "/tmp/instalar.json",
+  );
+
+  assert.equal(runtime.mode, "doctor");
+  assert.equal(runtime.printPlan, true);
+  assert.equal(runtime.verbose, true);
+  assert.equal(runtime.logFile, path.resolve(process.cwd(), "doctor.log"));
+});
+
 test("runtime falls back to the standard preset when config requests an invalid preset", () => {
   const harness = loadInstallerHarness();
   const warnings = [];
@@ -134,6 +153,7 @@ test("validateInstallerConfig rejects unknown keys and invalid nested values", (
     () => harness.validateInstallerConfig({ database: { connection: "mongo" } }),
     /config\.database\.connection must be sqlite, mysql, or pgsql/,
   );
+  assert.doesNotThrow(() => harness.validateInstallerConfig({ mode: "doctor" }));
   assert.throws(
     () => harness.validateInstallerConfig({ manual: { preset: "enterprise" } }),
     /config\(?.*?\.manual\.preset must be minimal, standard, or full|config\.manual\.preset must be minimal, standard, or full/,
