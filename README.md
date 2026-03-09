@@ -15,14 +15,14 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.11** (Rosie)
+Current version: **0.1.12** (Rosie)
 
 ---
 
 ## What INSTALAR does
 
 - Creates new Laravel 12 projects (`laravel new`) or updates existing ones.
-- Supports **Auto**, **Manual**, and **Update** modes.
+- Supports **Auto**, **Manual**, **Update**, and **Doctor** modes.
 - Prints a resolved install or update plan before execution.
 - Supports preview-only runs and plain-text installer logs.
 - Hides sensitive values in prompts and logs wherever possible.
@@ -32,6 +32,7 @@ Current version: **0.1.11** (Rosie)
 - Installs and configures Filament, Fortify, Boost, and optional packages.
 - Runs build/optimize steps in a practical order.
 - Runs post-install health checks and permission checks.
+- Diagnoses the current Laravel project with Doctor mode and suggests next steps.
 - Can optionally run `composer run dev` at the end.
 
 ---
@@ -75,22 +76,28 @@ Help:
 # 6) Apply dependency updates during Bash dependency stage
 ./instalar.sh --deps-update
 
-# 7) Verbose output for debugging
+# 7) Diagnose the current Laravel project
+./instalar.sh --mode doctor
+
+# 7b) Doctor report only, without repair prompts
+./instalar.sh --mode doctor --non-interactive --log-file ./doctor.log
+
+# 8) Verbose output for debugging
 ./instalar.sh --verbose
 
-# 8) Preview the resolved plan without creating or updating files
+# 9) Preview the resolved plan without creating or updating files
 ./instalar.sh --dry-run
 
-# 8b) Write installer output to a plain-text log file
+# 9b) Write installer output to a plain-text log file
 ./instalar.sh --log-file ./instalar.log
 
-# 9) Use the full package preset and skip boost:install
+# 10) Use the full package preset and skip boost:install
 ./instalar.sh --mode auto --preset full --skip-boost-install
 
-# 10) Debug mode (shows all commands)
+# 11) Debug mode (shows all commands)
 ./instalar.sh --debug
 
-# 11) Continue unattended runs even when health checks fail
+# 12) Continue unattended runs even when health checks fail
 ./instalar.sh --non-interactive --continue-on-health-check-failure
 ```
 
@@ -110,15 +117,15 @@ Help:
 ┌──────────────────────────────────────────────────────────────┐
 │ Embedded Node Installer (same file)                          │
 │ - CLI args + optional instalar.json                          │
-│ - Auto / Manual / Update mode                                │
+│ - Auto / Manual / Update / Doctor mode                       │
 └──────────────────────────────────────────────────────────────┘
-                │                      │                    │
-                ▼                      ▼                    ▼
-         Auto Installation      Manual Installation      Update Flow
-                │                      │                    │
-                └──────────────┬───────┴──────────────┬─────┘
-                               ▼                      ▼
-                    Setup + Migrate + Boost   Optimize + Frontend Build
+                │                      │                    │                    │
+                ▼                      ▼                    ▼                    ▼
+         Auto Installation      Manual Installation      Update Flow      Doctor Diagnostics
+                │                      │                    │                    │
+                └──────────────┬───────┴──────────────┬─────┴──────────────┬─────┘
+                               ▼                      ▼                    ▼
+                    Setup + Migrate + Boost   Optimize + Frontend Build  Health + Permissions
                                │
                                ▼
                     Health Check + Permission Check
@@ -142,7 +149,7 @@ Help:
 | `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
 | `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
 | `--continue-on-health-check-failure` | Continue non-interactive runs after failed final health checks |
-| `--mode <auto\|manual\|update>` | Force mode |
+| `--mode <auto\|manual\|update\|doctor>` | Force mode |
 | `--backup` | Backup existing target directory before replacing |
 | `--admin-generate` | Generate admin password instead of `password` |
 | `--allow-delete-existing` | Allow replacing existing target directory in non-interactive mode |
@@ -218,6 +225,14 @@ Help:
 - For existing Laravel projects.
 - Prints the detected package set before execution.
 - Runs `composer update`, migrations, build, and optional Boost setup.
+
+### Doctor
+
+- For the current Laravel project in the current working directory.
+- Reuses the installer's health checks and permission checks without changing project files by default.
+- Offers a prompted repair only for a missing `public/storage` symlink.
+- In `--non-interactive` or `--dry-run`, Doctor mode is report-only and does not attempt repairs.
+- Prints a summary with remaining issues and suggested next steps.
 
 ---
 
@@ -308,6 +323,7 @@ Example `instalar.json`:
 Notes:
 
 - If `--config` is omitted, `./instalar.json` is loaded automatically when present.
+- `mode` can be `auto`, `manual`, `update`, or `doctor`.
 - `preset` can be `minimal`, `standard`, or `full`.
 - Set `"dryRun": true` or `"printPlan": true` to resolve and preview the flow without modifying files.
 - `logFile` is resolved relative to the JSON config file when set there.
@@ -315,10 +331,38 @@ Notes:
 - Set `"allowDeleteAnyExisting": true` only when unattended runs may replace a generic non-empty directory or Git repository.
 - Test suite can be set via `laravelFlags` (`--pest` / `--phpunit`) or optional `"testSuite": "pest|phpunit"`.
 - Set `"continueOnHealthCheckFailure": true` when unattended runs should warn and continue after failed final health checks.
+- In Doctor mode, install-only settings such as package presets, admin settings, and target-directory options are ignored with warnings.
 - In non-interactive mode with an existing target directory:
   - without `--allow-delete-existing` => abort
   - with `--allow-delete-existing` => replace only empty directories or detected Laravel projects
   - with `--allow-delete-any-existing` => replace generic non-empty paths too (with `--backup`, backup first)
+
+---
+
+## Doctor Mode
+
+Doctor mode audits the current Laravel project and prints a focused diagnostics report.
+
+Example:
+
+```bash
+./instalar.sh --mode doctor
+```
+
+Report-only example:
+
+```bash
+./instalar.sh --mode doctor --non-interactive --log-file ./doctor.log
+```
+
+Doctor mode currently:
+
+- requires a Laravel project in the current working directory
+- reports detected Composer packages
+- runs the same health checks and permission checks used at the end of install/update flows
+- shows Nwidart status when `nwidart/laravel-modules` is installed
+- can prompt to create a missing `public/storage` symlink
+- exits with code `1` when unresolved issues remain
 
 ---
 
@@ -346,6 +390,8 @@ If any health check fails:
 - Non-interactive mode aborts with exit code `1`.
 - Add `--continue-on-health-check-failure` or `"continueOnHealthCheckFailure": true` to continue anyway.
 - Failed commands include a short recent-output snippet to speed up debugging.
+
+Doctor mode uses the same health and permission checks, but it never starts the dev server and only offers a safe storage-link repair prompt.
 
 Optional afterward:
 

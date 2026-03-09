@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.11"
+SCRIPT_VERSION="0.1.12"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -186,7 +186,7 @@ Options:
                           Continue unattended runs even when final health checks fail
   --backup                Backup existing target directory before replacing
   --admin-generate        Generate admin password instead of "password"
-  --mode <auto|manual|update>
+  --mode <auto|manual|update|doctor>
   --allow-delete-existing Replace existing target directories in non-interactive mode
   --allow-delete-any-existing
                          Also allow replacing generic or git-managed directories
@@ -1667,15 +1667,15 @@ function parseCliArgs(args) {
     options.mode = options.mode.toLowerCase();
   }
 
-  if (!["auto", "manual", "update", null].includes(options.mode)) {
-    warn(`Invalid --mode value: ${options.mode}. Use auto, manual, or update.`);
+  if (!["auto", "manual", "update", "doctor", null].includes(options.mode)) {
+    warn(`Invalid --mode value: ${options.mode}. Use auto, manual, update, or doctor.`);
     options.mode = null;
   }
 
   return options;
 }
 
-const VALID_INSTALLER_MODES = new Set(["auto", "manual", "update"]);
+const VALID_INSTALLER_MODES = new Set(["auto", "manual", "update", "doctor"]);
 const VALID_DATABASE_CONNECTIONS = new Set(["sqlite", "mysql", "pgsql"]);
 const VALID_TEST_SUITES = new Set(["pest", "phpunit"]);
 const ROOT_CONFIG_KEYS = new Set([
@@ -1803,7 +1803,7 @@ function validateInstallerConfig(config, label = "config", allowModeOverrides = 
     validateStringConfig(config.mode, `${label}.mode`);
     const normalizedMode = config.mode.trim().toLowerCase();
     if (!VALID_INSTALLER_MODES.has(normalizedMode)) {
-      throw new Error(`${label}.mode must be auto, manual, or update.`);
+      throw new Error(`${label}.mode must be auto, manual, update, or doctor.`);
     }
     config.mode = normalizedMode;
   }
@@ -1943,7 +1943,7 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
         nonInteractive,
     ),
     startServer: Boolean(cliOptions.startServer || fileConfig?.startServer === true),
-    mode: ["auto", "manual", "update"].includes(resolvedMode) ? resolvedMode : null,
+    mode: ["auto", "manual", "update", "doctor"].includes(resolvedMode) ? resolvedMode : null,
     configPath,
     config: fileConfig || {},
     verbose: Boolean(cliOptions.verbose || fileConfig?.verbose === true),
@@ -1975,6 +1975,71 @@ function resolveLogFilePath(cliValue, configValue, configPath) {
 
   const baseDirectory = configPath ? path.dirname(configPath) : process.cwd();
   return path.resolve(baseDirectory, configPathValue);
+}
+
+function warnDoctorModeIgnoredOptions(cliOptions = {}, fileConfig = {}) {
+  const ignoredCliOptions = [];
+  const ignoredConfigKeys = [];
+  const addCliWarning = (condition, label) => {
+    if (condition) {
+      ignoredCliOptions.push(label);
+    }
+  };
+
+  addCliWarning(cliOptions.preset !== null, "--preset");
+  addCliWarning(cliOptions.skipBoostInstall === true, "--skip-boost-install");
+  addCliWarning(
+    cliOptions.continueOnHealthCheckFailure === true,
+    "--continue-on-health-check-failure",
+  );
+  addCliWarning(cliOptions.backup === true, "--backup");
+  addCliWarning(cliOptions.adminGenerate === true, "--admin-generate");
+  addCliWarning(cliOptions.allowDeleteExisting === true, "--allow-delete-existing");
+  addCliWarning(cliOptions.allowDeleteAnyExisting === true, "--allow-delete-any-existing");
+  addCliWarning(cliOptions.startServer === true, "--start-server");
+
+  const ignoredDoctorConfigKeys = [
+    "projectName",
+    "appName",
+    "projectPath",
+    "preset",
+    "allowDeleteExisting",
+    "allowDeleteAnyExisting",
+    "backup",
+    "adminGenerate",
+    "continueOnHealthCheckFailure",
+    "skipBoostInstall",
+    "startServer",
+    "database",
+    "laravelFlags",
+    "laravelNewFlags",
+    "optionalPackageIds",
+    "customNormalPackages",
+    "customDevPackages",
+    "normalPackages",
+    "devPackages",
+    "createAdmin",
+    "gitInit",
+    "admin",
+    "testSuite",
+    "auto",
+    "manual",
+    "update",
+  ];
+
+  ignoredDoctorConfigKeys.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(fileConfig, key)) {
+      ignoredConfigKeys.push(key);
+    }
+  });
+
+  if (ignoredCliOptions.length > 0) {
+    warn(`Doctor mode ignores install-only CLI options: ${ignoredCliOptions.join(", ")}.`);
+  }
+
+  if (ignoredConfigKeys.length > 0) {
+    warn(`Doctor mode ignores install-only config keys: ${ignoredConfigKeys.join(", ")}.`);
+  }
 }
 
 // Mode presets inherit root config and then layer mode-specific overrides on top.
@@ -2970,9 +3035,16 @@ function readComposerPackages(projectDir) {
 
   const json = JSON.parse(fs.readFileSync(composerPath, "utf8"));
   const names = new Set();
+  const addPackages = (entries) => {
+    Object.keys(entries || {}).forEach((key) => {
+      if (key.includes("/")) {
+        names.add(key);
+      }
+    });
+  };
 
-  Object.keys(json.require || {}).forEach((key) => names.add(key));
-  Object.keys(json["require-dev"] || {}).forEach((key) => names.add(key));
+  addPackages(json.require);
+  addPackages(json["require-dev"]);
 
   return names;
 }
@@ -4427,42 +4499,193 @@ function checkAccess(targetPath, mode) {
   }
 }
 
-// Runs post-install health checks for key artisan commands and frontend manifest.
-async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
-  section("Health Check");
-
-  const envPath = path.join(projectPath, ".env");
-  const storageLinkPath = path.join(projectPath, "public", "storage");
-  const manifestPath = path.join(projectPath, "public", "build", "manifest.json");
+function summarizeCheckResults(results) {
   const failedChecks = [];
-  const recordFailure = (...labels) => {
-    for (const label of labels) {
+  let passedCount = 0;
+  let repairedCount = 0;
+
+  for (const result of results) {
+    if (result.ok) {
+      passedCount += 1;
+      if (result.repaired) {
+        repairedCount += 1;
+      }
+      continue;
+    }
+
+    for (const label of result.failures) {
       if (!failedChecks.includes(label)) {
         failedChecks.push(label);
       }
     }
-  };
+  }
 
+  return {
+    results,
+    passedCount,
+    failedCount: results.length - passedCount,
+    repairedCount,
+    totalCount: results.length,
+    failedChecks,
+  };
+}
+
+async function runStorageLinkHealthCheck(projectPath, runtimeOptions, repairMode = "none") {
+  const storageLinkPath = path.join(projectPath, "public", "storage");
+
+  let storageLinkOk = false;
+  try {
+    const lstat = fs.lstatSync(storageLinkPath);
+    storageLinkOk = lstat.isSymbolicLink();
+  } catch {
+    storageLinkOk = false;
+  }
+
+  if (storageLinkOk) {
+    ok("Storage link exists");
+    return {
+      name: "Storage link",
+      ok: true,
+      repaired: false,
+      failures: [],
+    };
+  }
+
+  if (repairMode === "finalize") {
+    warn("Storage link missing - attempting to create");
+    const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+      cwd: projectPath,
+      required: false,
+      warnOnFailure: false,
+    });
+
+    if (linkResult.success) {
+      ok("Storage link created successfully");
+      return {
+        name: "Storage link",
+        ok: true,
+        repaired: true,
+        failures: [],
+      };
+    }
+
+    warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
+    if (runtimeOptions.nonInteractive) {
+      return {
+        name: "Storage link",
+        ok: false,
+        repaired: false,
+        failures: ["Storage link"],
+      };
+    }
+
+    const retry = await askYesNo("Try again?", false);
+    if (!retry) {
+      return {
+        name: "Storage link",
+        ok: false,
+        repaired: false,
+        failures: ["Storage link"],
+      };
+    }
+
+    const retryResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+      cwd: projectPath,
+      required: false,
+      warnOnFailure: false,
+    });
+
+    if (retryResult.success) {
+      ok("Storage link created successfully");
+      return {
+        name: "Storage link",
+        ok: true,
+        repaired: true,
+        failures: [],
+      };
+    }
+
+    return {
+      name: "Storage link",
+      ok: false,
+      repaired: false,
+      failures: ["Storage link"],
+    };
+  }
+
+  warn("Storage link missing");
+
+  if (repairMode === "doctor" && !runtimeOptions.nonInteractive && !runtimeOptions.printPlan) {
+    const shouldRepair = await askYesNo("Create storage link now?", true);
+    if (!shouldRepair) {
+      return {
+        name: "Storage link",
+        ok: false,
+        repaired: false,
+        failures: ["Storage link"],
+      };
+    }
+
+    const repairResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
+      cwd: projectPath,
+      required: false,
+      warnOnFailure: false,
+    });
+
+    if (repairResult.success) {
+      ok("Storage link created successfully");
+      return {
+        name: "Storage link",
+        ok: true,
+        repaired: true,
+        failures: [],
+      };
+    }
+
+    warn("Storage link repair failed - run 'php artisan storage:link' manually");
+  }
+
+  return {
+    name: "Storage link",
+    ok: false,
+    repaired: false,
+    failures: ["Storage link"],
+  };
+}
+
+async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, options = {}) {
+  section(options.sectionTitle || "Health Check");
+
+  const envPath = path.join(projectPath, ".env");
+  const manifestPath = path.join(projectPath, "public", "build", "manifest.json");
   const healthChecks = [
-    // A small declarative list keeps the summary, override handling, and future
-    // health-check additions consistent across install and update flows.
     {
       name: "APP_KEY",
       run: async () => {
         if (!fs.existsSync(envPath)) {
           warn(".env file not found");
-          return [".env"];
+          return {
+            name: "APP_KEY",
+            ok: false,
+            repaired: false,
+            failures: [".env"],
+          };
         }
 
         const envContent = fs.readFileSync(envPath, "utf8");
         const appKeyMatch = envContent.match(/^APP_KEY=base64:[A-Za-z0-9+\/=]+$/m);
         if (appKeyMatch) {
           ok("APP_KEY is set");
-          return [];
+          return { name: "APP_KEY", ok: true, repaired: false, failures: [] };
         }
 
         warn("APP_KEY is missing - run 'php artisan key:generate'");
-        return ["APP_KEY"];
+        return {
+          name: "APP_KEY",
+          ok: false,
+          repaired: false,
+          failures: ["APP_KEY"],
+        };
       },
     },
     {
@@ -4475,64 +4698,23 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
         });
 
         if (dbCheck.exitCode === 0) {
-          return [];
+          ok("Database connection check passed");
+          return { name: "Database", ok: true, repaired: false, failures: [] };
         }
 
         warn("Database connection check failed");
-        return ["Database"];
+        return {
+          name: "Database",
+          ok: false,
+          repaired: false,
+          failures: ["Database"],
+        };
       },
     },
     {
       name: "Storage link",
-      run: async () => {
-        let storageLinkOk = false;
-        try {
-          const lstat = fs.lstatSync(storageLinkPath);
-          storageLinkOk = lstat.isSymbolicLink();
-        } catch {
-          storageLinkOk = false;
-        }
-
-        if (storageLinkOk) {
-          ok("Storage link exists");
-          return [];
-        }
-
-        warn("Storage link missing - attempting to create");
-        const linkResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
-          cwd: projectPath,
-          required: false,
-          warnOnFailure: false,
-        });
-
-        if (linkResult.success) {
-          ok("Storage link created successfully");
-          return [];
-        }
-
-        warn("Failed to create storage link - you can run 'php artisan storage:link' manually");
-        if (runtimeOptions.nonInteractive) {
-          return ["Storage link"];
-        }
-
-        const retry = await askYesNo("Try again?", false);
-        if (!retry) {
-          return ["Storage link"];
-        }
-
-        const retryResult = await runCommand("php", ["artisan", "storage:link", "--no-interaction"], {
-          cwd: projectPath,
-          required: false,
-          warnOnFailure: false,
-        });
-
-        if (retryResult.success) {
-          ok("Storage link created successfully");
-          return [];
-        }
-
-        return ["Storage link"];
-      },
+      run: async () =>
+        runStorageLinkHealthCheck(projectPath, runtimeOptions, options.repairMode || "none"),
     },
     {
       name: "Composer validate",
@@ -4545,11 +4727,21 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
 
         if (composerValidate.exitCode === 0) {
           ok("Composer.json is valid");
-          return [];
+          return {
+            name: "Composer validate",
+            ok: true,
+            repaired: false,
+            failures: [],
+          };
         }
 
         warn("Composer.json validation failed");
-        return ["Composer"];
+        return {
+          name: "Composer validate",
+          ok: false,
+          repaired: false,
+          failures: ["Composer"],
+        };
       },
     },
     {
@@ -4562,11 +4754,22 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
         });
 
         if (result.exitCode === 0) {
-          return [];
+          ok("Artisan about check passed");
+          return {
+            name: "Artisan about",
+            ok: true,
+            repaired: false,
+            failures: [],
+          };
         }
 
         warn("Artisan about check failed");
-        return ["php artisan about"];
+        return {
+          name: "Artisan about",
+          ok: false,
+          repaired: false,
+          failures: ["php artisan about"],
+        };
       },
     },
     {
@@ -4579,11 +4782,22 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
         });
 
         if (result.exitCode === 0) {
-          return [];
+          ok("Migration status check passed");
+          return {
+            name: "Migration status",
+            ok: true,
+            repaired: false,
+            failures: [],
+          };
         }
 
         warn("Migration status check failed");
-        return ["php artisan migrate:status"];
+        return {
+          name: "Migration status",
+          ok: false,
+          repaired: false,
+          failures: ["php artisan migrate:status"],
+        };
       },
     },
     {
@@ -4596,11 +4810,22 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
         });
 
         if (result.exitCode === 0) {
-          return [];
+          ok("Route list check passed");
+          return {
+            name: "Route list",
+            ok: true,
+            repaired: false,
+            failures: [],
+          };
         }
 
         warn("Route list check failed");
-        return ["php artisan route:list"];
+        return {
+          name: "Route list",
+          ok: false,
+          repaired: false,
+          failures: ["php artisan route:list"],
+        };
       },
     },
     {
@@ -4608,30 +4833,50 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
       run: async () => {
         if (fs.existsSync(manifestPath)) {
           ok("Vite manifest found (public/build/manifest.json)");
-          return [];
+          return {
+            name: "Vite manifest",
+            ok: true,
+            repaired: false,
+            failures: [],
+          };
         }
 
         warn("Vite manifest missing: public/build/manifest.json");
-        return ["Vite manifest"];
+        return {
+          name: "Vite manifest",
+          ok: false,
+          repaired: false,
+          failures: ["Vite manifest"],
+        };
       },
     },
   ];
 
+  const results = [];
   for (const healthCheck of healthChecks) {
-    const failures = await healthCheck.run();
-    recordFailure(...failures);
+    results.push(await healthCheck.run());
   }
 
-  if (failedChecks.length > 0) {
+  return summarizeCheckResults(results);
+}
+
+// Runs post-install health checks for key artisan commands and frontend manifest.
+async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
+  const report = await runHealthCheckSuite(projectPath, runtimeOptions, {
+    sectionTitle: "Health Check",
+    repairMode: "finalize",
+  });
+
+  if (report.failedChecks.length > 0) {
     console.log("");
-    const failedList = failedChecks.join(", ");
+    const failedList = report.failedChecks.join(", ");
     fail(`Health check failed for: ${failedList}`);
     console.log("");
 
     if (runtimeOptions.nonInteractive) {
       if (runtimeOptions.continueOnHealthCheckFailure) {
         warn("Continuing because health-check override is enabled for non-interactive mode.");
-        return;
+        return report;
       }
 
       fail("Installation aborted because health checks failed in non-interactive mode.");
@@ -4645,11 +4890,12 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
     }
     info("Continuing despite health check failures...");
   }
+
+  return report;
 }
 
-// Verifies essential filesystem permissions and optionally starts the dev server.
-async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = state.runtime) {
-  section("Permissions");
+function runPermissionChecks(projectPath, options = {}) {
+  section(options.sectionTitle || "Permissions");
 
   const checks = [
     {
@@ -4678,26 +4924,123 @@ async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = sta
     },
   ];
 
+  const results = [];
   let hasPermissionIssues = false;
 
   for (const check of checks) {
     if (!fs.existsSync(check.targetPath)) {
       hasPermissionIssues = true;
       warn(`${check.label} missing: ${check.targetPath}`);
+      results.push({
+        name: check.label,
+        ok: false,
+        repaired: false,
+        failures: [check.label],
+      });
       continue;
     }
 
     if (checkAccess(check.targetPath, check.mode)) {
       ok(`${check.label} ok (${check.hint})`);
-    } else {
-      hasPermissionIssues = true;
-      warn(`${check.label} has insufficient permissions (${check.hint})`);
+      results.push({
+        name: check.label,
+        ok: true,
+        repaired: false,
+        failures: [],
+      });
+      continue;
     }
+
+    hasPermissionIssues = true;
+    warn(`${check.label} has insufficient permissions (${check.hint})`);
+    results.push({
+      name: check.label,
+      ok: false,
+      repaired: false,
+      failures: [check.label],
+    });
   }
 
   if (hasPermissionIssues) {
     warn("Tip: check permissions, e.g. chmod -R ug+rw storage bootstrap/cache");
   }
+
+  return summarizeCheckResults(results);
+}
+
+function collectDoctorSuggestions(healthReport, permissionReport) {
+  const failedChecks = new Set([...healthReport.failedChecks, ...permissionReport.failedChecks]);
+  const suggestions = [];
+  const addSuggestion = (condition, suggestion) => {
+    if (condition && !suggestions.includes(suggestion)) {
+      suggestions.push(suggestion);
+    }
+  };
+
+  addSuggestion(failedChecks.has("APP_KEY"), "Run `php artisan key:generate`.");
+  addSuggestion(failedChecks.has("Database"), "Review DB settings and run `php artisan db:show`.");
+  addSuggestion(failedChecks.has("Storage link"), "Run `php artisan storage:link`.");
+  addSuggestion(failedChecks.has("Composer"), "Run `composer validate` and fix composer.json errors.");
+  addSuggestion(
+    failedChecks.has("php artisan about"),
+    "Run `php artisan about` and fix the reported Laravel boot error.",
+  );
+  addSuggestion(
+    failedChecks.has("php artisan migrate:status"),
+    "Run `php artisan migrate:status` and resolve pending migration issues.",
+  );
+  addSuggestion(
+    failedChecks.has("php artisan route:list"),
+    "Run `php artisan route:list` and fix the reported route or container error.",
+  );
+  addSuggestion(failedChecks.has("Vite manifest"), "Run `npm install && npm run build`.");
+  addSuggestion(
+    failedChecks.has("project directory"),
+    "Verify project ownership and directory permissions.",
+  );
+  addSuggestion(
+    failedChecks.has("storage") || failedChecks.has("bootstrap/cache"),
+    "Run `chmod -R ug+rw storage bootstrap/cache` and verify ownership.",
+  );
+  addSuggestion(failedChecks.has(".env"), "Create or restore `.env` and make it writable.");
+
+  return suggestions;
+}
+
+function printDoctorSummary(projectPath, healthReport, permissionReport) {
+  section("Doctor Summary");
+  info(`Project: ${projectPath}`);
+  info(`Health checks: ${healthReport.passedCount}/${healthReport.totalCount} passed`);
+  info(`Permission checks: ${permissionReport.passedCount}/${permissionReport.totalCount} passed`);
+
+  if (healthReport.repairedCount > 0) {
+    info(`Repairs applied: ${healthReport.repairedCount}`);
+  }
+
+  const unresolvedIssues = [...new Set([
+    ...healthReport.failedChecks,
+    ...permissionReport.failedChecks,
+  ])];
+
+  if (unresolvedIssues.length === 0) {
+    ok("Doctor found no remaining issues.");
+    return true;
+  }
+
+  fail(`Doctor found unresolved issues: ${unresolvedIssues.join(", ")}`);
+
+  const suggestions = collectDoctorSuggestions(healthReport, permissionReport);
+  if (suggestions.length > 0) {
+    info("Suggested next steps:");
+    suggestions.forEach((suggestion) => info(`- ${suggestion}`));
+  }
+
+  return false;
+}
+
+// Verifies essential filesystem permissions and optionally starts the dev server.
+async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = state.runtime) {
+  runPermissionChecks(projectPath, { sectionTitle: "Permissions" });
 
   let startServer = false;
   if (runtimeOptions.nonInteractive) {
@@ -4719,6 +5062,43 @@ async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = sta
     interactive: true,
     captureOutput: false,
   });
+}
+
+async function runDoctorFlow(projectPath, runtimeOptions = state.runtime) {
+  if (!isLaravelProject(projectPath)) {
+    throw new Error("Doctor mode requires a Laravel project in the current directory.");
+  }
+
+  const packages = readComposerPackages(projectPath);
+
+  section("Doctor Mode");
+  info(`Project: ${projectPath}`);
+  info(`Path type: ${describePathClassification(classifyExistingPath(projectPath))}`);
+  info(`Dry run: ${runtimeOptions.printPlan ? "yes" : "no"}`);
+  info(`Log file: ${runtimeOptions.logFile || "-"}`);
+  info(`Detected packages: ${formatList([...packages].sort())}`);
+  info(
+    `Repair prompts: ${
+      runtimeOptions.nonInteractive || runtimeOptions.printPlan
+        ? "disabled"
+        : "enabled for safe fixes"
+    }`,
+  );
+
+  const healthReport = await runHealthCheckSuite(projectPath, runtimeOptions, {
+    sectionTitle: "Health Check",
+    repairMode: runtimeOptions.nonInteractive || runtimeOptions.printPlan ? "none" : "doctor",
+  });
+  const permissionReport = runPermissionChecks(projectPath, {
+    sectionTitle: "Permissions",
+  });
+
+  if (packages.has("nwidart/laravel-modules")) {
+    section("Nwidart Status");
+    printNwidartSetupSummary(projectPath, packages);
+  }
+
+  return printDoctorSummary(projectPath, healthReport, permissionReport);
 }
 
 // Executes all final post-install steps in order.
@@ -4747,7 +5127,7 @@ function printNodeUsage() {
   console.log("  --skip-boost-install    Skip interactive boost:install");
   console.log("  --continue-on-health-check-failure");
   console.log("                          Continue unattended runs despite failed health checks");
-  console.log("  --mode <auto|manual|update>");
+  console.log("  --mode <auto|manual|update|doctor>");
   console.log("  --backup                Backup existing target directory before replacing");
   console.log("  --admin-generate        Generate admin password");
   console.log("  --allow-delete-existing Allow replacing in non-interactive mode");
@@ -4798,6 +5178,10 @@ async function main() {
     info(`Loaded configuration: ${resolvedConfigPath}`);
   }
 
+  if (state.runtime.mode === "doctor") {
+    warnDoctorModeIgnoredOptions(cliOptions, loadedConfig);
+  }
+
   if (!state.runtime.nonInteractive && !process.stdin.isTTY) {
     throw new Error(
       "No interactive terminal detected. Use --non-interactive for unattended runs.",
@@ -4827,6 +5211,14 @@ async function main() {
 
     await runUpdateFlow(cwd);
     await finalizeProject(cwd, state.runtime);
+    return;
+  }
+
+  if (mode === "doctor") {
+    const doctorSucceeded = await runDoctorFlow(cwd, state.runtime);
+    if (!doctorSucceeded) {
+      process.exitCode = 1;
+    }
     return;
   }
 
