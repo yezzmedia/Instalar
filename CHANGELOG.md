@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.10] - 2026-03-08 (Rosie)
+## [0.1.10] - 2026-03-09 (Rosie)
 
 ### Added
 
@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 
 - Capture recent stdout/stderr snippets for failed commands to make debugging faster
 - Keep README, help output, and release metadata aligned with the new runtime logging flags
+- Pass release metadata from the Bash entrypoint into the embedded Node runtime for real dry-run logging
 
 ## [0.1.9] - 2026-03-08 (Rosie)
 
