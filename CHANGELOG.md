@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] - 2026-03-08 (Rosie)
+
+### Added
+
+- `--dry-run` as the primary preview flag, with `--print-plan` kept as a legacy alias
+- `--log-file <path>` plus matching JSON `logFile` support for plain-text installer logs
+- Logging-focused regression coverage for runtime log output and command-failure context
+
+### Changed
+
+- Runtime plans now show whether the run is preview-only and where logs are written
+- Relative `logFile` values from JSON config are resolved against the config file directory
+- Final summary output is mirrored into the installer log file
+
+### Fixed
+
+- Capture recent stdout/stderr snippets for failed commands to make debugging faster
+- Keep README, help output, and release metadata aligned with the new runtime logging flags
+
 ## [0.1.9] - 2026-03-08 (Rosie)
 
 ### Added

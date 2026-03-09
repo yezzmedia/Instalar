@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.9** (Rosie)
+Current version: **0.1.10** (Rosie)
 
 ---
 
@@ -24,6 +24,7 @@ Current version: **0.1.9** (Rosie)
 - Creates new Laravel 12 projects (`laravel new`) or updates existing ones.
 - Supports **Auto**, **Manual**, and **Update** modes.
 - Prints a resolved install or update plan before execution.
+- Supports preview-only runs and plain-text installer logs.
 - Hides sensitive values in prompts and logs wherever possible.
 - Checks system dependencies with versions (`php`, `composer`, `laravel`, `node`, `npm`).
 - Installs missing dependencies and can apply available dependency updates.
@@ -78,7 +79,10 @@ Help:
 ./instalar.sh --verbose
 
 # 8) Preview the resolved plan without creating or updating files
-./instalar.sh --print-plan
+./instalar.sh --dry-run
+
+# 8b) Write installer output to a plain-text log file
+./instalar.sh --log-file ./instalar.log
 
 # 9) Use the full package preset and skip boost:install
 ./instalar.sh --mode auto --preset full --skip-boost-install
@@ -132,7 +136,9 @@ Help:
 | `--help` | Show help |
 | `--config <file>` | Load JSON configuration file |
 | `--non-interactive`, `-y`, `--yes` | Run without prompts, use defaults/config |
-| `--print-plan` | Collect input, print the resolved install/update plan, and exit |
+| `--dry-run` | Collect input, print the resolved install/update plan, and exit |
+| `--print-plan` | Legacy alias for `--dry-run` |
+| `--log-file <path>` | Write installer output to a plain-text log file |
 | `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
 | `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
 | `--continue-on-health-check-failure` | Continue non-interactive runs after failed final health checks |
@@ -152,7 +158,9 @@ Help:
 
 - INSTALAR prints a resolved plan before installation or update starts.
 - Interactive runs ask for confirmation against that plan before anything is changed.
-- `--print-plan` goes one step further: it resolves the flow, prints the plan, and exits without modifying files.
+- `--dry-run` goes one step further: it resolves the flow, prints the plan, and exits without modifying files.
+- `--print-plan` remains available as a legacy alias.
+- `--log-file <path>` stores installer status lines and command output in a plain-text file.
 - Package presets help choose a starting stack quickly:
   - `minimal` keeps the install lean.
   - `standard` adds Fortify and AI tooling.
@@ -274,7 +282,9 @@ Example `instalar.json`:
   "allowDeleteAnyExisting": false,
   "backup": true,
   "adminGenerate": true,
+  "dryRun": false,
   "printPlan": false,
+  "logFile": "./logs/instalar.log",
   "skipBoostInstall": false,
   "continueOnHealthCheckFailure": false,
   "startServer": false,
@@ -298,7 +308,8 @@ Notes:
 
 - If `--config` is omitted, `./instalar.json` is loaded automatically when present.
 - `preset` can be `minimal`, `standard`, or `full`.
-- Set `"printPlan": true` to resolve and preview the flow without modifying files.
+- Set `"dryRun": true` or `"printPlan": true` to resolve and preview the flow without modifying files.
+- `logFile` is resolved relative to the JSON config file when set there.
 - Set `"skipBoostInstall": true` when unattended runs should skip the interactive Boost step.
 - Set `"allowDeleteAnyExisting": true` only when unattended runs may replace a generic non-empty directory or Git repository.
 - Test suite can be set via `laravelFlags` (`--pest` / `--phpunit`) or optional `"testSuite": "pest|phpunit"`.
@@ -333,6 +344,7 @@ If any health check fails:
 - Interactive mode prompts you to continue or abort.
 - Non-interactive mode aborts with exit code `1`.
 - Add `--continue-on-health-check-failure` or `"continueOnHealthCheckFailure": true` to continue anyway.
+- Failed commands include a short recent-output snippet to speed up debugging.
 
 Optional afterward:
 
