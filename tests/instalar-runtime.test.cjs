@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 
 const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
 
@@ -39,6 +40,34 @@ test("runtime options merge the health-check override from CLI and JSON config",
   assert.equal(configRuntime.preset, "minimal");
   assert.equal(configRuntime.skipBoostInstall, true);
   assert.equal(configRuntime.configPath, "/tmp/instalar.json");
+});
+
+test("runtime resolves dry-run aliases and log files from CLI and config", () => {
+  const harness = loadInstallerHarness();
+
+  const cliRuntime = harness.resolveRuntime(
+    harness.parseCliArgs(["--dry-run", "--log-file", "logs/installer.log"]),
+    {},
+    null,
+  );
+
+  assert.equal(cliRuntime.printPlan, true);
+  assert.equal(cliRuntime.logFile, path.resolve(process.cwd(), "logs/installer.log"));
+
+  const configRuntime = harness.resolveRuntime(
+    harness.parseCliArgs([]),
+    {
+      dryRun: true,
+      logFile: "./logs/config-instalar.log",
+    },
+    "/tmp/instalar/config/instalar.json",
+  );
+
+  assert.equal(configRuntime.printPlan, true);
+  assert.equal(
+    configRuntime.logFile,
+    path.resolve("/tmp/instalar/config", "logs/config-instalar.log"),
+  );
 });
 
 test("runtime prefers explicit CLI mode and preserves other config flags", () => {
@@ -107,5 +136,13 @@ test("validateInstallerConfig rejects unknown keys and invalid nested values", (
   assert.throws(
     () => harness.validateInstallerConfig({ manual: { preset: "enterprise" } }),
     /config\(?.*?\.manual\.preset must be minimal, standard, or full|config\.manual\.preset must be minimal, standard, or full/,
+  );
+  assert.throws(
+    () => harness.validateInstallerConfig({ logFile: "" }),
+    /config\.logFile must not be empty/,
+  );
+  assert.throws(
+    () => harness.validateInstallerConfig({ dryRun: "yes" }),
+    /config\.dryRun must be a boolean/,
   );
 });

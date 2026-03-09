@@ -14,12 +14,16 @@ test("help output documents the current installer flags and version", () => {
 
   assert.equal(result.status, 0);
   assert.match(output, new RegExp(`INSTALAR v${installer.version.replaceAll(".", "\\.")}`));
+  assert.match(output, /--dry-run/);
   assert.match(output, /--print-plan/);
+  assert.match(output, /--log-file <path>/);
   assert.match(output, /--preset <name>/);
   assert.match(output, /--skip-boost-install/);
   assert.match(output, /--allow-delete-any-existing/);
   assert.match(output, /--continue-on-health-check-failure/);
-  assert.match(output, /Collect input and print the resolved plan/);
+  assert.match(output, /Resolve input, print the plan, and exit without modifying files/);
+  assert.match(output, /Legacy alias for --dry-run/);
+  assert.match(output, /Write installer output to a plain-text log file/);
   assert.match(output, /Package preset: minimal, standard, or full/);
   assert.match(output, /Skip interactive boost:install step/);
   assert.match(output, /Also allow replacing generic or git-managed directories/);

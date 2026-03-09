@@ -116,6 +116,7 @@ test("printInstallPlan reports preset, boost behavior, and preview-only mode", (
       nonInteractive: true,
       printPlan: true,
       preset: "full",
+      logFile: "/tmp/demo-instalar.log",
       skipBoostInstall: true,
       continueOnHealthCheckFailure: true,
       allowDeleteExisting: false,
@@ -127,6 +128,8 @@ test("printInstallPlan reports preset, boost behavior, and preview-only mode", (
   assert.ok(events.infos.includes("Mode: manual"));
   assert.ok(events.infos.includes("Preset: Full"));
   assert.ok(events.infos.includes("Database: pgsql"));
+  assert.ok(events.infos.includes("Dry run: yes"));
+  assert.ok(events.infos.includes("Log file: /tmp/demo-instalar.log"));
   assert.ok(events.infos.includes("Boost install: skip"));
   assert.ok(events.infos.some((message) => message.startsWith("Path type: ")));
   assert.ok(events.infos.includes("Admin password: provided via config (hidden)"));
