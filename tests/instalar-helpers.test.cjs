@@ -196,16 +196,20 @@ test("source rewrite helpers extract nested blocks and preserve indentation", ()
 test("printUpdatePlan reports runtime details without mutating project state", () => {
   const harness = loadInstallerHarness();
   const events = {
-    infos: [],
+    details: [],
     oks: [],
     sections: [],
+    subsections: [],
   };
 
   harness.setSection((title) => {
     events.sections.push(title);
   });
-  harness.setInfo((message) => {
-    events.infos.push(message);
+  harness.setSubsection((title) => {
+    events.subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
   });
   harness.setOk((message) => {
     events.oks.push(message);
@@ -223,10 +227,18 @@ test("printUpdatePlan reports runtime details without mutating project state", (
   );
 
   assert.deepEqual(events.sections, ["Update Plan"]);
-  assert.ok(events.infos.includes("Project: /tmp/demo-project"));
-  assert.ok(events.infos.includes("Dry run: yes"));
-  assert.ok(events.infos.includes("Log file: /tmp/instalar.log"));
-  assert.ok(events.infos.includes("Boost install: run interactively"));
-  assert.ok(events.infos.includes("Health-check failure override: abort"));
+  assert.deepEqual(events.subsections, ["Project", "Runtime", "Detected Packages"]);
+  assert.ok(
+    events.details.includes(
+      "Update the current Laravel project with a preview of the detected package stack.",
+    ),
+  );
+  assert.ok(events.details.some((message) => /Project:\s+\/tmp\/demo-project$/.test(message)));
+  assert.ok(events.details.some((message) => /Dry run:\s+yes$/.test(message)));
+  assert.ok(events.details.some((message) => /Log file:\s+\/tmp\/instalar\.log$/.test(message)));
+  assert.ok(events.details.some((message) => /Boost install:\s+run interactively$/.test(message)));
+  assert.ok(events.details.some((message) => /Health-check failures:\s+abort$/.test(message)));
+  assert.ok(events.details.includes("- filament/filament"));
+  assert.ok(events.details.includes("- laravel/pulse"));
   assert.ok(events.oks.includes("Plan preview only. No project files will be modified."));
 });

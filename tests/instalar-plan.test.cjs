@@ -77,16 +77,20 @@ test("path helpers classify existing directories and enforce safer unattended re
 test("printInstallPlan reports preset, boost behavior, and preview-only mode", () => {
   const harness = loadInstallerHarness();
   const events = {
-    infos: [],
+    details: [],
     oks: [],
     sections: [],
+    subsections: [],
   };
 
   harness.setSection((title) => {
     events.sections.push(title);
   });
-  harness.setInfo((message) => {
-    events.infos.push(message);
+  harness.setSubsection((title) => {
+    events.subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
   });
   harness.setOk((message) => {
     events.oks.push(message);
@@ -125,20 +129,93 @@ test("printInstallPlan reports preset, boost behavior, and preview-only mode", (
   );
 
   assert.deepEqual(events.sections, ["Installation Plan"]);
-  assert.ok(events.infos.includes("Mode: manual"));
-  assert.ok(events.infos.includes("Preset: Full"));
-  assert.ok(events.infos.includes("Database: pgsql"));
-  assert.ok(events.infos.includes("Dry run: yes"));
-  assert.ok(events.infos.includes("Log file: /tmp/demo-instalar.log"));
-  assert.ok(events.infos.includes("Boost install: skip"));
-  assert.ok(events.infos.some((message) => message.startsWith("Path type: ")));
-  assert.ok(events.infos.includes("Admin password: provided via config (hidden)"));
-  assert.ok(events.infos.includes("Configured secrets: yes"));
-  assert.ok(events.infos.includes("Health-check failure override: continue"));
+  assert.deepEqual(events.subsections, [
+    "Project",
+    "Database",
+    "Starter",
+    "Packages",
+    "Normal Packages",
+    "Dev Packages",
+    "Admin and Git",
+    "Runtime",
+  ]);
+  assert.ok(
+    events.details.includes(
+      "Review the grouped summary before the installer creates or replaces files.",
+    ),
+  );
+  assert.ok(events.details.some((message) => /Mode:\s+manual$/.test(message)));
+  assert.ok(events.details.some((message) => /Preset:\s+Full$/.test(message)));
+  assert.ok(events.details.some((message) => /Connection:\s+pgsql$/.test(message)));
+  assert.ok(events.details.some((message) => /Dry run:\s+yes$/.test(message)));
+  assert.ok(
+    events.details.some((message) => /Log file:\s+\/tmp\/demo-instalar\.log$/.test(message)),
+  );
+  assert.ok(events.details.some((message) => /Boost install:\s+skip$/.test(message)));
+  assert.ok(events.details.some((message) => message.startsWith("Path type:")));
+  assert.ok(
+    events.details.some((message) => /Admin password:\s+provided via config \(hidden\)$/.test(message)),
+  );
+  assert.ok(events.details.some((message) => /Configured secrets:\s+yes$/.test(message)));
+  assert.ok(events.details.some((message) => /Health-check failures:\s+continue$/.test(message)));
+  assert.equal(events.details.join("\n").includes("super-secret"), false);
   assert.ok(events.oks.includes("Plan preview only. No project files will be modified."));
-  assert.equal(events.infos.join("\n").includes("super-secret"), false);
   assert.equal(packageSet.has("laravel/boost"), true);
   assert.equal(packageSet.has("laravel/fortify"), true);
   assert.equal(packageSet.has("laravel/pulse"), true);
   assert.equal(packageSet.has("barryvdh/laravel-debugbar"), true);
+});
+
+test("printFinalNotes groups project details, next steps, admin details, and warnings", () => {
+  const harness = loadInstallerHarness();
+  const events = {
+    details: [],
+    oks: [],
+    sections: [],
+    subsections: [],
+  };
+
+  harness.state.boostInstallSkipped = true;
+  harness.state.createdAdmin = {
+    name: "Jane Admin",
+    email: "jane@example.com",
+    password: "generated-secret",
+    revealPassword: true,
+    passwordSource: "generated",
+  };
+  harness.state.warnings = ["Storage link missing", "Boost install skipped"];
+
+  harness.setSection((title) => {
+    events.sections.push(title);
+  });
+  harness.setSubsection((title) => {
+    events.subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
+  });
+  harness.setOk((message) => {
+    events.oks.push(message);
+  });
+
+  harness.printFinalNotes("/tmp/demo-app", {
+    logFile: "/tmp/demo-instalar.log",
+    startServer: false,
+  });
+
+  assert.deepEqual(events.sections, ["Completed"]);
+  assert.deepEqual(events.subsections, ["Project", "Next Steps", "Filament Admin", "Warnings"]);
+  assert.ok(events.oks.includes("INSTALAR completed successfully."));
+  assert.ok(events.details.some((message) => /Project path:\s+\/tmp\/demo-app$/.test(message)));
+  assert.ok(
+    events.details.some((message) => /Log file:\s+\/tmp\/demo-instalar\.log$/.test(message)),
+  );
+  assert.ok(events.details.includes("- cd /tmp/demo-app"));
+  assert.ok(events.details.includes("- php artisan serve"));
+  assert.ok(events.details.includes("- composer run dev"));
+  assert.ok(events.details.includes("- php artisan boost:install"));
+  assert.ok(events.details.some((message) => /Email:\s+jane@example\.com$/.test(message)));
+  assert.ok(events.details.some((message) => /Password:\s+generated-secret$/.test(message)));
+  assert.ok(events.details.includes("- Storage link missing"));
+  assert.ok(events.details.includes("- Boost install skipped"));
 });

@@ -23,6 +23,8 @@ test("askYesNo accepts only English aliases in interactive mode", async () => {
 
 test("collectAutoConfig resolves presets, database defaults, and generated admin credentials", async () => {
   const harness = loadInstallerHarness();
+  const sections = [];
+  const details = [];
 
   harness.state.runtime = {
     ...harness.state.runtime,
@@ -30,7 +32,12 @@ test("collectAutoConfig resolves presets, database defaults, and generated admin
     preset: "standard",
     adminGenerate: true,
   };
-  harness.setSection(() => {});
+  harness.setSection((title) => {
+    sections.push(title);
+  });
+  harness.setDetail((message) => {
+    details.push(message);
+  });
   harness.setInfo(() => {});
   harness.setWarn(() => {});
   harness.setAskRequired(async (question, defaultValue) => {
@@ -41,7 +48,7 @@ test("collectAutoConfig resolves presets, database defaults, and generated admin
     return defaultValue;
   });
   harness.setAskChoice(async (question) => {
-    if (question === "Choose package preset") {
+    if (question === "Package preset") {
       return harness.PACKAGE_PRESETS.findIndex((preset) => preset.id === "full");
     }
 
@@ -79,6 +86,12 @@ test("collectAutoConfig resolves presets, database defaults, and generated admin
   assert.equal(config.admin.passwordSource, "generated");
   assert.equal(config.admin.revealPassword, true);
   assert.ok(config.admin.password.length >= 20);
+  assert.deepEqual(sections, ["Automatic Setup"]);
+  assert.ok(
+    details.includes(
+      "Resolve a project name, apply a preset, and use opinionated defaults.",
+    ),
+  );
   assert.ok(config.normalPackages.includes("filament/filament:^5.0"));
   assert.ok(config.normalPackages.includes("laravel/fortify"));
   assert.ok(config.normalPackages.includes("laravel/pennant"));
@@ -88,6 +101,7 @@ test("collectAutoConfig resolves presets, database defaults, and generated admin
 
 test("collectManualConfig combines prompt answers, preset packages, and configured admin secrets", async () => {
   const harness = loadInstallerHarness();
+  const sections = [];
 
   harness.state.runtime = {
     ...harness.state.runtime,
@@ -95,7 +109,10 @@ test("collectManualConfig combines prompt answers, preset packages, and configur
     preset: "minimal",
     adminGenerate: false,
   };
-  harness.setSection(() => {});
+  harness.setSection((title) => {
+    sections.push(title);
+  });
+  harness.setDetail(() => {});
   harness.setInfo(() => {});
   harness.setWarn(() => {});
   harness.setAskRequired(async (question, defaultValue) => {
@@ -121,10 +138,10 @@ test("collectManualConfig combines prompt answers, preset packages, and configur
     if (question === "DB Port") {
       return "5433";
     }
-    if (question === "Custom Composer packages (normal, optional)") {
+    if (question === "Additional Composer packages") {
       return "laravel/socialite:^5.0 spatie/laravel-health:^1.0";
     }
-    if (question === "Custom Composer packages (dev, optional)") {
+    if (question === "Additional dev Composer packages") {
       return "laravel/dusk:^8.0";
     }
 
@@ -132,33 +149,33 @@ test("collectManualConfig combines prompt answers, preset packages, and configur
   });
   harness.setAskSecret(async () => "manual-secret");
   harness.setAskChoice(async (question) => {
-    if (question === "Choose package preset") {
-      return harness.PACKAGE_PRESETS.findIndex((preset) => preset.id === "full");
-    }
-    if (question === "Choose database") {
+    if (question === "Database engine") {
       return 2;
     }
-    if (question === "Choose Laravel test suite") {
+    if (question === "Default test suite") {
       return 1;
+    }
+    if (question === "Package preset") {
+      return harness.PACKAGE_PRESETS.findIndex((preset) => preset.id === "full");
     }
 
     throw new Error(`Unexpected choice prompt: ${question}`);
   });
   harness.setAskMultiChoiceWithAll(async (question) => {
-    if (question === "Choose Laravel startup flags") {
+    if (question === "Starter features") {
       return [0, 2];
     }
-    if (question === "Choose optional packages (Filament + Boost are always active)") {
+    if (question === "Optional packages") {
       return harness.getOptionIndexesByIds(["fortify", "modules_bundle"], []);
     }
 
     throw new Error(`Unexpected multiselect prompt: ${question}`);
   });
   harness.setAskYesNo(async (question) => {
-    if (question === "Create Filament admin user") {
+    if (question === "Create a Filament admin user") {
       return true;
     }
-    if (question === "Run git init") {
+    if (question === "Initialize a Git repository") {
       return true;
     }
 
@@ -200,4 +217,61 @@ test("collectManualConfig combines prompt answers, preset packages, and configur
   assert.equal(config.admin.passwordSource, "config");
   assert.equal(config.admin.revealPassword, false);
   assert.equal(config.gitInit, true);
+  assert.deepEqual(sections, [
+    "Step 1/6 - Project Basics",
+    "Step 2/6 - Database",
+    "Step 3/6 - Laravel Starter",
+    "Step 4/6 - Packages",
+    "Step 5/6 - Admin and Git",
+  ]);
+});
+
+test("reviewManualConfig offers start, retry, or cancel after the grouped review screen", async () => {
+  const harness = loadInstallerHarness();
+  const sections = [];
+  const askedQuestions = [];
+
+  harness.state.runtime = {
+    ...harness.state.runtime,
+    nonInteractive: false,
+    printPlan: false,
+    logFile: null,
+    skipBoostInstall: false,
+    continueOnHealthCheckFailure: false,
+  };
+  harness.setSection((title) => {
+    sections.push(title);
+  });
+  harness.setSubsection(() => {});
+  harness.setDetail(() => {});
+  harness.setOk(() => {});
+  harness.setInfo(() => {});
+  harness.setAskChoice(async (question) => {
+    askedQuestions.push(question);
+    return 1;
+  });
+
+  const action = await harness.reviewManualConfig({
+    mode: "manual",
+    presetId: "standard",
+    appName: "Manual App",
+    projectPath: "/tmp/manual-app",
+    database: { connection: "sqlite" },
+    laravelNewFlags: ["--npm", "--boost", "--pest"],
+    normalPackages: ["filament/filament:^5.0", "laravel/boost"],
+    devPackages: [],
+    createAdmin: true,
+    admin: {
+      name: "Admin",
+      email: "admin@example.com",
+      password: "hidden",
+      passwordSource: "config",
+      revealPassword: false,
+    },
+    gitInit: false,
+  });
+
+  assert.equal(action, "retry");
+  assert.deepEqual(sections, ["Step 6/6 - Review", "Installation Plan"]);
+  assert.deepEqual(askedQuestions, ["Review action"]);
 });
