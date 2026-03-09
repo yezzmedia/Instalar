@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.12** (Rosie)
+Current version: **0.1.13** (Rosie)
 
 ---
 
@@ -23,6 +23,7 @@ Current version: **0.1.12** (Rosie)
 
 - Creates new Laravel 12 projects (`laravel new`) or updates existing ones.
 - Supports **Auto**, **Manual**, **Update**, and **Doctor** modes.
+- Uses a step-based Manual-mode flow with a grouped review screen before execution.
 - Prints a resolved install or update plan before execution.
 - Supports preview-only runs and plain-text installer logs.
 - Hides sensitive values in prompts and logs wherever possible.
@@ -108,7 +109,7 @@ Help:
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ Bash Entrypoint (instalar.sh)                                │
-│ - Banner                                                     │
+│ - Compact header                                             │
 │ - Dependency check (php/composer/laravel/node/npm)           │
 │ - Optional install/update of missing tools                   │
 └──────────────────────────────────────────────────────────────┘

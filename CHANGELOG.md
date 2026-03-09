@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.13] - 2026-03-09 (Rosie)
+
+### Added
+
+- Coverage for the grouped plan output, final summary output, Manual-mode review step, and non-interactive Manual-mode dry-run flow
+
+### Changed
+
+- Refreshed the CLI interface with a smaller startup header and cleaner grouped help output
+- Reworked Manual mode into a step-based guided flow for project, database, starter, package, and admin setup
+- Replaced the flat install and update plan dumps with grouped review sections and compact package lists
+- Improved Doctor and completion summaries to group project details, next actions, and unresolved issues
+- Clarified prompt copy and selection input labels to feel more guided and less raw
+
+### Fixed
+
+- Kept README, help output, and release metadata aligned with the refreshed interface
+
 ## [0.1.12] - 2026-03-09 (Rosie)
 
 ### Added
