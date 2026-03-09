@@ -52,8 +52,6 @@ if [[ -t 1 ]]; then
   RED=$'\033[31m'     # Red (errors)
   GREEN=$'\033[32m'   # Green (success)
   YELLOW=$'\033[33m'  # Yellow (warnings)
-  BLUE=$'\033[34m'    # Blue
-  MAGENTA=$'\033[35m' # Magenta
   CYAN=$'\033[36m'    # Cyan (info)
   WHITE=$'\033[37m'   # White
 else
@@ -63,8 +61,6 @@ else
   RED=""
   GREEN=""
   YELLOW=""
-  BLUE=""
-  MAGENTA=""
   CYAN=""
   WHITE=""
 fi
