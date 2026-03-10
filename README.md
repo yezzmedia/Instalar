@@ -6,39 +6,28 @@
 [![Laravel](https://img.shields.io/badge/Laravel-12-blue?style=flat)](https://laravel.com/)
 [![Filament](https://img.shields.io/badge/Filament-5-blueviolet?style=flat)](https://filamentphp.com/)
 
-Reference installer for Laravel 12 + Filament 5.
+Modern terminal setup, update, and diagnostics for Laravel 12 + Filament 5.
 
-Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
+Made with <3 by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*.
 
-`instalar.sh` is intentionally built as a **single file**:
+Current version: **0.1.15** (Rosie)
 
-- Bash entrypoint for dependency checks/install/update
-- Embedded Node installer for interactive and configurable project setup
+> [!NOTE]
+> `instalar.sh` stays intentionally **single-file**:
+> - Bash entrypoint for dependency checks, installs, and updates
+> - Embedded Node runtime for guided setup, plans, and diagnostics
 
-Current version: **0.1.14** (Rosie)
+## Why INSTALAR
 
----
+INSTALAR is for teams that want a **repeatable Laravel + Filament starting point** without manually replaying the same setup, package, build, and health-check steps every time.
 
-## What INSTALAR does
+It focuses on:
 
-- Creates new Laravel 12 projects (`laravel new`) or updates existing ones.
-- Supports **Auto**, **Manual**, **Update**, and **Doctor** modes.
-- Uses a step-based Manual-mode flow with a grouped review screen before execution.
-- Prints a resolved install or update plan before execution.
-- Supports preview-only runs and plain-text installer logs.
-- Hides sensitive values in prompts and logs wherever possible.
-- Prints concise recovery summaries for failed Composer, npm, Artisan, and permission checks.
-- Checks system dependencies with versions (`php`, `composer`, `laravel`, `node`, `npm`).
-- Installs missing dependencies and can apply available dependency updates.
-- Supports package presets (`minimal`, `standard`, `full`) and richer optional package labels.
-- Installs and configures Filament, Fortify, Boost, and optional packages.
-- Runs build/optimize steps in a practical order.
-- Runs post-install health checks and permission checks.
-- Diagnoses the current Laravel project with Doctor mode and suggests next steps.
-- Doctor mode can now restore `.env` from `.env.example` and try a safe cache-clear/rebuild repair for failing Artisan health checks.
-- Can optionally run `composer run dev` at the end.
-
----
+- **Fast starts** with `auto` mode
+- **Safer custom runs** with `manual` mode and a final review screen
+- **Maintenance runs** with `update` mode
+- **Diagnostics** with `doctor` mode
+- **Operational clarity** through dry-runs, log files, health checks, and concise recovery summaries
 
 ## Quick Start
 
@@ -53,416 +42,372 @@ Help:
 ./instalar.sh --help
 ```
 
----
-
-## Cheatsheet (Copy/Paste)
+Preview a run without changing files:
 
 ```bash
-# 1) Standard interactive run
+./instalar.sh --dry-run
+```
+
+## Choose Your Mode
+
+| Mode | Best for | What it does |
+|---|---|---|
+| `manual` | First runs and custom stacks | Guided step-by-step setup with a grouped final review |
+| `auto` | Fastest path | Opinionated project creation with a preset-driven package stack |
+| `update` | Existing projects | Refreshes the current Laravel project, then rebuilds and rechecks it |
+| `doctor` | Diagnostics and support | Audits the current Laravel project and suggests safe next steps |
+
+## Common Flows
+
+```bash
+# Standard guided setup
 ./instalar.sh
 
-# 2) Non-interactive with local config (./instalar.json)
+# Fast non-interactive run using ./instalar.json
 ./instalar.sh --non-interactive
 
-# 3) Non-interactive with explicit config + manual mode
-./instalar.sh --non-interactive --config ./instalar.json --mode manual
+# Force manual mode with an explicit config file
+./instalar.sh --non-interactive --mode manual --config ./instalar.json
 
-# 4) Replace existing target, keep backup, generate admin password
-./instalar.sh --non-interactive --mode auto --allow-delete-existing --backup --admin-generate
+# Replace an existing Laravel target and keep a backup
+./instalar.sh --non-interactive --mode auto --allow-delete-existing --backup
 
-# 4b) Replace a generic non-empty path only with the explicit high-risk override
+# Replace a risky non-empty target only with the explicit high-risk override
 ./instalar.sh --non-interactive --mode auto --allow-delete-any-existing
 
-# 5) Update existing Laravel project in current directory
+# Update the current Laravel project
 ./instalar.sh --mode update
 
-# 6) Apply dependency updates during Bash dependency stage
-./instalar.sh --deps-update
-
-# 7) Diagnose the current Laravel project
-./instalar.sh --mode doctor
-
-# 7b) Doctor report only, without repair prompts
+# Diagnose the current Laravel project without repair prompts
 ./instalar.sh --mode doctor --non-interactive --log-file ./doctor.log
 
-# 8) Verbose output for debugging
-./instalar.sh --verbose
+# Apply dependency updates in the Bash dependency stage
+./instalar.sh --deps-update
 
-# 9) Preview the resolved plan without creating or updating files
-./instalar.sh --dry-run
-
-# 9b) Write installer output to a plain-text log file
-./instalar.sh --log-file ./instalar.log
-
-# 10) Use the full package preset and skip boost:install
-./instalar.sh --mode auto --preset full --skip-boost-install
-
-# 11) Debug mode (shows all commands)
-./instalar.sh --debug
-
-# 12) Continue unattended runs even when health checks fail
+# Continue unattended runs even when final health checks fail
 ./instalar.sh --non-interactive --continue-on-health-check-failure
 ```
 
----
+## What the Installer Does
 
-## Architecture (Flow)
+- Creates new Laravel 12 projects with `laravel new`
+- Supports `auto`, `manual`, `update`, and `doctor` modes
+- Prints a resolved review screen before install or update work begins
+- Supports preview-only runs with `--dry-run`
+- Writes plain-text runtime logs with `--log-file <path>`
+- Hides sensitive values in prompts and logs wherever possible
+- Detects system dependencies and can install or update missing tooling
+- Installs and configures Filament, Fortify, Boost, and optional packages
+- Runs optimize, build, and health-check steps in a practical order
+- Prints concise recovery guidance for failed Composer, npm, Artisan, and permission steps
+- Offers narrow Doctor-mode repairs for a missing `.env` and stale Laravel caches where safe
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ Bash Entrypoint (instalar.sh)                                │
-│ - Compact header                                             │
-│ - Dependency check (php/composer/laravel/node/npm)           │
-│ - Optional install/update of missing tools                   │
-└──────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────┐
-│ Embedded Node Installer (same file)                          │
-│ - CLI args + optional instalar.json                          │
-│ - Auto / Manual / Update / Doctor mode                       │
-└──────────────────────────────────────────────────────────────┘
-                │                      │                    │                    │
-                ▼                      ▼                    ▼                    ▼
-         Auto Installation      Manual Installation      Update Flow      Doctor Diagnostics
-                │                      │                    │                    │
-                └──────────────┬───────┴──────────────┬─────┴──────────────┬─────┘
-                               ▼                      ▼                    ▼
-                    Setup + Migrate + Boost   Optimize + Frontend Build  Health + Permissions
-                               │
-                               ▼
-                    Health Check + Permission Check
-                               │
-                               ▼
-                    Optional: composer run dev
+## Installer Lifecycle
+
+```mermaid
+flowchart TD
+    A[Start instalar.sh] --> B[Bash dependency phase]
+    B --> C{Mode resolved}
+    C -->|auto| D[Auto setup]
+    C -->|manual| E[Manual setup]
+    C -->|update| F[Update current project]
+    C -->|doctor| G[Doctor diagnostics]
+    D --> H[Review screen]
+    E --> H
+    H --> I[Install and configure project]
+    F --> J[Update, migrate, optimize, build]
+    I --> K[Health and permission checks]
+    J --> K
+    K --> L[Completion summary]
+    G --> M[Doctor report]
 ```
 
----
+## Mode Lifecycle
 
-## CLI Options
+```mermaid
+flowchart LR
+    A[Choose mode] --> B[Resolve config and defaults]
+    B --> C[Show grouped review or report]
+    C --> D{Dry run?}
+    D -->|yes| E[Exit without file changes]
+    D -->|no| F[Run mode workflow]
+    F --> G[Summaries, warnings, and next steps]
+```
+
+## Run Controls
 
 | Option | Description |
 |---|---|
 | `--help` | Show help |
 | `--config <file>` | Load JSON configuration file |
-| `--non-interactive`, `-y`, `--yes` | Run without prompts, use defaults/config |
-| `--dry-run` | Collect input, print the resolved install/update plan, and exit |
+| `--non-interactive`, `-y`, `--yes` | Run without prompts and use defaults/config |
+| `--dry-run` | Resolve the run, print the review, and exit without changing files |
 | `--print-plan` | Legacy alias for `--dry-run` |
 | `--log-file <path>` | Write installer output to a plain-text log file |
 | `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
 | `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
-| `--continue-on-health-check-failure` | Continue non-interactive runs after failed final health checks |
-| `--mode <auto\|manual\|update\|doctor>` | Force mode |
-| `--backup` | Backup existing target directory before replacing |
-| `--admin-generate` | Generate admin password instead of `password` |
-| `--allow-delete-existing` | Allow replacing existing target directory in non-interactive mode |
-| `--allow-delete-any-existing` | Also allow replacing generic or git-managed paths in non-interactive mode |
+| `--continue-on-health-check-failure` | Continue unattended runs after failed final health checks |
+| `--mode <auto\|manual\|update\|doctor>` | Force a specific mode |
+| `--backup` | Backup an existing target directory before replacing it |
+| `--admin-generate` | Generate the admin password instead of using `password` |
+| `--allow-delete-existing` | Allow replacing an empty directory or detected Laravel project in unattended mode |
+| `--allow-delete-any-existing` | Also allow replacing generic non-empty paths or Git repositories |
 | `--start-server` | Run `composer run dev` automatically at the end |
-| `--deps-update` | Apply detected dependency updates in Bash phase |
+| `--deps-update` | Apply detected dependency updates in the Bash phase |
 | `--verbose` | Enable verbose output |
-| `--debug` | Enable debug mode (shows all commands) |
+| `--debug` | Enable debug mode and show full command execution |
 
----
+## Safety, Preview, and Logging Model
 
-## Plan Preview and Presets
+- Every install and update run resolves into a **grouped review screen** before execution.
+- `--dry-run` resolves the same review, prints it, and exits without touching project files.
+- `--log-file <path>` stores installer status lines and captured command context in plain text.
+- Plan and log output never prints configured passwords in clear text.
+- Interactive confirmations accept English answers only: `y`, `yes`, `n`, `no`.
 
-- INSTALAR prints a resolved plan before installation or update starts.
-- Interactive runs ask for confirmation against that plan before anything is changed.
-- `--dry-run` goes one step further: it resolves the flow, prints the plan, and exits without modifying files.
-- `--print-plan` remains available as a legacy alias.
-- `--log-file <path>` stores installer status lines and command output in a plain-text file.
-- Package presets help choose a starting stack quickly:
-  - `minimal` keeps the install lean.
-  - `standard` adds Fortify and AI tooling.
-  - `full` adds a broader auth, monitoring, and DX stack.
-- Plan output never prints configured passwords.
+### Safer unattended defaults
 
----
+- `--allow-delete-existing` only covers:
+  - empty directories
+  - detected Laravel projects
+- `--allow-delete-any-existing` is required for:
+  - generic non-empty directories
+  - Git-managed directories
+- Root-level, home-directory, and current-working-directory protections remain in place.
 
-## Safer Defaults
+## Presets and Package Selection
 
-- DB passwords are treated as secrets:
-  - interactive prompts are masked
-  - non-interactive logs print `(hidden)` instead of the value
-- Interactive confirmation prompts use English answers: `y`, `yes`, `n`, `no`.
-- Generated admin passwords are shown once at the end of the run.
-- Configured or default admin passwords are never printed back to the terminal.
-- Non-interactive path replacement is stricter:
-  - `--allow-delete-existing` only covers empty directories and detected Laravel projects
-  - `--allow-delete-any-existing` is required for generic non-empty paths and Git repositories
+INSTALAR supports three package presets:
 
----
+- `minimal` keeps the install lean
+- `standard` adds a balanced default stack
+- `full` adds a broader auth, monitoring, and DX stack
 
-## Modes
+Manual mode also supports:
+
+- optional package multi-select with categories and summaries
+- custom normal Composer packages
+- custom dev Composer packages
+- starter flag selection for `laravel new`
+- test suite selection (`Pest` or `PHPUnit`)
+
+## Mode Details
 
 ### Auto
 
-- Asks for project name and package preset.
-- Uses SQLite by default.
-- Uses Laravel startup flags: `--npm --livewire --boost --pest`.
-- Uses the selected preset to prefill optional packages.
-- Creates default admin by default:
-  - Email: `admin@example.com`
-  - Password: `password` (or generated with `--admin-generate`)
+- Asks for the project name and a package preset
+- Uses SQLite by default
+- Uses Laravel starter flags: `--npm --livewire --boost --pest`
+- Creates an admin account by default unless configured otherwise
 
 ### Manual
 
-- Full control over:
-  - project directory
-  - database
-  - Laravel startup flags
-  - Laravel test suite (`Pest` or `PHPUnit`)
-  - package preset, optional packages, and custom Composer packages
-  - admin creation
-  - optional `git init`
-- Package multi-select keyboard support:
-  - `↑/↓` move
+- Guides you through project, database, starter, package, admin, and Git decisions
+- Includes a final review screen before anything is created or replaced
+- Supports keyboard multi-select:
+  - `Up/Down` move
   - `Space` toggle
   - `Enter` confirm
-  - includes `Select all`
-- Optional package choices show a category and short summary to make selection easier.
-- DB password prompts are masked.
+- Masks DB password prompts
 
 ### Update
 
-- For existing Laravel projects.
-- Prints the detected package set before execution.
-- Runs `composer update`, migrations, build, and optional Boost setup.
+- Works against the current Laravel project in the current directory
+- Prints the detected package stack before execution
+- Runs `composer update`, migrations, optimize, and frontend build steps
 
 ### Doctor
 
-- For the current Laravel project in the current working directory.
-- Reuses the installer's health checks and permission checks without changing project files by default.
-- Offers a prompted repair only for a missing `public/storage` symlink.
-- In `--non-interactive` or `--dry-run`, Doctor mode is report-only and does not attempt repairs.
-- Prints a summary with remaining issues and suggested next steps.
+- Reuses the installer's health and permission checks
+- Is report-only in `--non-interactive` and `--dry-run`
+- Offers safe repair prompts only when interactive
+- Prints grouped unresolved issues and recommended fixes at the end
 
----
+## JSON Config for Unattended Runs
 
-## Installation Sequence (Simplified)
+If `--config` is omitted, INSTALAR automatically loads `./instalar.json` when present.
 
-1. Dependency check + optional install/update
-2. Create/select project
-3. Configure `.env`
-4. Install Composer packages
-5. Run setup commands (Fortify/Filament/Nwidart/etc.)
-6. `boost:install` (interactive unless skipped)
-7. `php artisan optimize`
-8. `npm install` + `npm run build`
-9. Health check + permission check + optional server start
+Common top-level fields:
 
----
+- `mode`: `auto`, `manual`, `update`, or `doctor`
+- `preset`: `minimal`, `standard`, or `full`
+- `nonInteractive`: `true` or `false`
+- `dryRun` / `printPlan`
+- `logFile`
+- `skipBoostInstall`
+- `continueOnHealthCheckFailure`
+- `allowDeleteExisting`
+- `allowDeleteAnyExisting`
+
+Common install fields:
+
+- `projectName`
+- `projectPath`
+- `database`
+- `laravelFlags` / `laravelNewFlags`
+- `optionalPackageIds`
+- `normalPackages`
+- `devPackages`
+- `createAdmin`
+- `admin`
+- `gitInit`
+
+Example:
+
+```json
+{
+  "mode": "manual",
+  "projectName": "Acme Portal",
+  "projectPath": "./acme-portal",
+  "preset": "standard",
+  "database": {
+    "connection": "sqlite"
+  },
+  "nonInteractive": true,
+  "dryRun": true,
+  "logFile": "./instalar.log"
+}
+```
+
+## Doctor Mode
+
+Doctor mode is the installer's support-friendly diagnostics pass for the **current** Laravel project.
+
+It checks:
+
+- `.env` / `APP_KEY`
+- database connectivity
+- storage symlink status
+- Composer validation
+- Artisan boot commands
+- Vite manifest presence
+- storage, bootstrap/cache, project, and `.env` permissions
+
+Safe repair coverage:
+
+- restore `.env` from `.env.example` when possible
+- recreate `public/storage`
+- clear and rebuild Laravel caches for certain failing Artisan checks
+
+Doctor intentionally does **not** auto-fix:
+
+- database configuration problems
+- migration problems
+- route/container issues beyond the safe cache reset
+- frontend build failures
+- permission ownership issues
+
+## End-of-Run Checks
+
+Install and update flows finish with:
+
+1. Health checks
+2. Permission checks
+3. Optional `composer run dev`
+4. A grouped completion summary with next commands
+
+Health checks currently cover:
+
+- `APP_KEY`
+- database connectivity
+- `public/storage`
+- `composer validate`
+- `php artisan about`
+- `php artisan migrate:status`
+- `php artisan route:list`
+- `public/build/manifest.json`
 
 ## Nwidart / Modules Setup
 
 When `nwidart/laravel-modules` is selected, INSTALAR automatically handles:
 
 - `allow-plugins.wikimedia/composer-merge-plugin = true`
-- `extra.merge-plugin.include = ["Modules/*/composer.json"]`
-- removal of legacy `autoload.psr-4["Modules\\"]` (if present)
-- publish of Nwidart config + vite loader
-- creation of `Modules/` and `modules_statuses.json`
-- Vite module asset loader wiring (`collectModuleAssetsPaths`)
-- Core module bootstrap:
-  - `php artisan module:make CoreModule`
-  - `php artisan module:filament:install CoreModule`
-
-When `coolsam/modules` is selected, INSTALAR also runs:
-
-- `php artisan modules:install --no-interaction`
-- `php artisan vendor:publish --tag=modules-config --no-interaction`
-
-You also get a clear status line:
-
-- `[ OK ] Nwidart setup complete (plugins + merge + vite)`
-- or `[WARN] Nwidart setup incomplete: ...`
-
----
-
-## Non-Interactive + JSON Config
-
-You can run INSTALAR without prompts.
-
-Example:
-
-```bash
-./instalar.sh --non-interactive --config instalar.json --mode manual --backup --admin-generate --allow-delete-existing
-```
-
-Example `instalar.json`:
-
-```json
-{
-  "mode": "manual",
-  "projectName": "My App",
-  "projectPath": "./my-app",
-  "preset": "standard",
-  "allowDeleteExisting": true,
-  "allowDeleteAnyExisting": false,
-  "backup": true,
-  "adminGenerate": true,
-  "dryRun": false,
-  "printPlan": false,
-  "logFile": "./logs/instalar.log",
-  "skipBoostInstall": false,
-  "continueOnHealthCheckFailure": false,
-  "startServer": false,
-  "database": {
-    "connection": "sqlite"
-  },
-  "laravelFlags": ["--npm", "--livewire", "--boost", "--pest"],
-  "optionalPackageIds": ["fortify", "ai", "modules_bundle"],
-  "customNormalPackages": [],
-  "customDevPackages": [],
-  "createAdmin": true,
-  "gitInit": false,
-  "admin": {
-    "name": "Admin",
-    "email": "admin@example.com"
-  }
-}
-```
-
-Notes:
-
-- If `--config` is omitted, `./instalar.json` is loaded automatically when present.
-- `mode` can be `auto`, `manual`, `update`, or `doctor`.
-- `preset` can be `minimal`, `standard`, or `full`.
-- Set `"dryRun": true` or `"printPlan": true` to resolve and preview the flow without modifying files.
-- `logFile` is resolved relative to the JSON config file when set there.
-- Set `"skipBoostInstall": true` when unattended runs should skip the interactive Boost step.
-- Set `"allowDeleteAnyExisting": true` only when unattended runs may replace a generic non-empty directory or Git repository.
-- Test suite can be set via `laravelFlags` (`--pest` / `--phpunit`) or optional `"testSuite": "pest|phpunit"`.
-- Set `"continueOnHealthCheckFailure": true` when unattended runs should warn and continue after failed final health checks.
-- In Doctor mode, install-only settings such as package presets, admin settings, and target-directory options are ignored with warnings.
-- In non-interactive mode with an existing target directory:
-  - without `--allow-delete-existing` => abort
-  - with `--allow-delete-existing` => replace only empty directories or detected Laravel projects
-  - with `--allow-delete-any-existing` => replace generic non-empty paths too (with `--backup`, backup first)
-
----
-
-## Doctor Mode
-
-Doctor mode audits the current Laravel project and prints a focused diagnostics report.
-
-Example:
-
-```bash
-./instalar.sh --mode doctor
-```
-
-Report-only example:
-
-```bash
-./instalar.sh --mode doctor --non-interactive --log-file ./doctor.log
-```
-
-Doctor mode currently:
-
-- requires a Laravel project in the current working directory
-- reports detected Composer packages
-- runs the same health checks and permission checks used at the end of install/update flows
-- shows Nwidart status when `nwidart/laravel-modules` is installed
-- can prompt to create a missing `public/storage` symlink
-- exits with code `1` when unresolved issues remain
-
----
-
-## End-of-Run Health Checks
-
-INSTALAR runs:
-
-- Check for `APP_KEY` in `.env`
-- `php artisan db:show` (database connection)
-- Check for `public/storage` symlink
-- `composer validate`
-- `php artisan about`
-- `php artisan migrate:status`
-- `php artisan route:list`
-- check for `public/build/manifest.json`
-- permission checks for:
-  - project directory
-  - `storage`
-  - `bootstrap/cache`
-  - `.env`
-
-If any health check fails:
-
-- Interactive mode prompts you to continue or abort.
-- Non-interactive mode aborts with exit code `1`.
-- Add `--continue-on-health-check-failure` or `"continueOnHealthCheckFailure": true` to continue anyway.
-- Failed commands include a short recent-output snippet to speed up debugging.
-
-Doctor mode uses the same health and permission checks, but it never starts the dev server and only offers a safe storage-link repair prompt.
-
-Optional afterward:
-
-- `composer run dev`
-- `php artisan boost:install` if the Boost step was skipped
-
----
+- merge-plugin include setup for `Modules/*/composer.json`
+- removal of legacy `autoload.psr-4["Modules\\"]` when present
+- Vite main-config adjustments for module asset loading
+- module status bootstrap files and the base `Modules/` directory
 
 ## Troubleshooting
 
-- **`modules_statuses.json` missing / Vite ENOENT**
-  - INSTALAR creates it automatically.
-  - Manual fallback: create it in project root with at least `{}`.
+### The installer says a dependency is missing
 
-- **`reverb:install` requires interaction**
-  - This is expected in some setups; it is intentionally not forced with `--no-interaction`.
+- Re-run the script interactively and allow the Bash dependency phase to install or update tools
+- Or install the missing dependency manually, then rerun the installer
 
-- **Existing target directory**
-  - Interactive mode: installer asks for confirmation.
-  - Non-interactive mode: use `--allow-delete-existing` for empty/Laravel paths, or `--allow-delete-any-existing` for generic/Git paths, optionally `--backup`.
+### A dry-run works, but the real run fails later
 
-- **`node --test` discovers browser tests from a local sample app**
-  - Keep local generated example apps in a dot-prefixed directory inside the repo, or run `node --test tests/*.cjs` explicitly.
+- Re-run with `--log-file ./instalar.log`
+- Re-run with `--verbose` or `--debug` for more command detail
+- Use the printed recovery summary to rerun the failing command manually
 
----
+### Doctor mode reports unresolved issues
+
+- Follow the `Recommended Fixes` section in the Doctor report
+- Re-run `./instalar.sh --mode doctor` after the manual fixes
+
+### Vite manifest missing
+
+- Run:
+
+```bash
+npm install
+npm run build
+```
+
+### Permission issues remain
+
+- Check ownership first
+- Then try:
+
+```bash
+chmod -R ug+rw storage bootstrap/cache
+chmod ug+rw .env
+```
 
 ## Quality Gates
 
-- Pull requests and pushes to `main` run GitHub Actions for:
-  - `bash -n instalar.sh`
-  - `shellcheck instalar.sh`
-  - `./instalar.sh --help`
-  - `node --test`
-- Tag pushes matching `v*` validate release metadata and create/update a GitHub draft release from the latest changelog section.
+Local checks used for the installer itself:
 
----
+```bash
+node --test
+node --test tests/*.cjs
+bash -n instalar.sh
+./instalar.sh --help
+```
 
-## Future Improvements
+CI also runs:
 
-These features are planned or under consideration:
+- ShellCheck for the Bash phase
+- Help output smoke checks
+- Node-based installer regression coverage
 
-### Short-term
-- Additional health checks (Redis connection, mail configuration)
-- Enhanced backup/restore functionality
-- Custom post-install commands
-- Improved verbose output for failed commands
+## Release Shape
 
-### Mid-term
-- Extended database support (PostgreSQL, SQL Server)
-- Plugin system for custom packages
-- Cross-platform CI coverage for more shell/package-manager combinations
+Recent releases focus on:
 
-### Long-term
-- Optional web-based installation UI
-- Remote installation support (`curl ... | bash` from remote URL)
+- CLI UX and onboarding
+- safer unattended behavior
+- better diagnostics and recovery summaries
+- deterministic regression coverage
 
----
+The expected release tag format is:
 
-## Project Files
+```text
+v<version>-<codename>
+```
 
-- `instalar.sh` — main installer (single required file)
-- `tests/` — Node-based installer smoke and consistency tests
-- `.github/workflows/` — CI and draft-release automation
-- `CHANGELOG.md` — change history
-- `LICENSE` — MIT license
+For this release:
 
----
+```text
+v0.1.15-Rosie
+```
+
+## Project Layout
+
+- `instalar.sh` - single-file installer
+- `tests/` - Node-based regression, smoke, and consistency tests
+- `.github/workflows/` - CI and release automation
 
 ## License
 
-MIT. See `LICENSE`.
+This project is open-sourced under the [MIT license](LICENSE).
