@@ -12,6 +12,7 @@ test("runCommand writes plain-text run metadata to the runtime log", async () =>
   const metadata = readInstallerMetadata();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-log-"));
   const logFile = path.join(tempDir, "instalar.log");
+  const originalConsoleLog = console.log;
 
   harness.state.runtime.logFile = logFile;
   harness.state.runtime.logFileWriteFailed = false;
@@ -21,17 +22,24 @@ test("runCommand writes plain-text run metadata to the runtime log", async () =>
 
   harness.initializeRuntimeLog();
 
-  const success = await harness.runCommand("node", ["-e", "console.log('hello from stdout')"], {
-    required: true,
-  });
-  const failure = await harness.runCommand(
-    "node",
-    ["-e", "console.error('boom from stderr'); process.exit(3);"],
-    {
-      required: false,
-      warnOnFailure: true,
-    },
-  );
+  console.log = () => {};
+  let success;
+  let failure;
+  try {
+    success = await harness.runCommand("node", ["-e", "console.log('hello from stdout')"], {
+      required: true,
+    });
+    failure = await harness.runCommand(
+      "node",
+      ["-e", "console.error('boom from stderr'); process.exit(3);"],
+      {
+        required: false,
+        warnOnFailure: true,
+      },
+    );
+  } finally {
+    console.log = originalConsoleLog;
+  }
 
   const logContent = fs.readFileSync(logFile, "utf8");
 
@@ -64,4 +72,29 @@ test("buildCommandFailureSnippet keeps recent stdout and stderr context readable
   assert.match(snippet, /Last stderr:/);
   assert.match(snippet, /broken state/);
   assert.match(snippet, /trace line/);
+});
+
+test("runCommand attaches a recovery summary to required command failures", async () => {
+  const harness = loadInstallerHarness();
+  const originalConsoleLog = console.log;
+
+  console.log = () => {};
+  try {
+    await assert.rejects(
+      async () => {
+        await harness.runCommand("npm", ["run", "build"], {
+          required: true,
+        });
+      },
+      (error) => {
+        assert.equal(error.failureSummary.title, "npm Failure");
+        assert.ok(error.failureSummary.nextSteps.includes("npm install"));
+        assert.ok(error.failureSummary.nextSteps.includes("npm run build"));
+        assert.match(error.message, /Command failed \(exit \d+\): npm run build/);
+        return true;
+      },
+    );
+  } finally {
+    console.log = originalConsoleLog;
+  }
 });

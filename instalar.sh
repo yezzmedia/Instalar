@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.13"
+SCRIPT_VERSION="0.1.14"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -1554,6 +1554,134 @@ function printBulletSection(title, items = [], emptyLabel = "-") {
   items.forEach((item) => detail(`- ${item}`));
 }
 
+function uniqueList(values = []) {
+  return [...new Set(values.filter((value) => value !== undefined && value !== null && value !== ""))];
+}
+
+function artisanCommandLabel(args = []) {
+  if (!Array.isArray(args) || args[0] !== "artisan") {
+    return "";
+  }
+
+  return args
+    .slice(1)
+    .filter((arg) => typeof arg === "string" && !arg.startsWith("-"))
+    .join(" ")
+    .trim();
+}
+
+function buildCommandFailureSummary(command, args, options = {}) {
+  const cwd = options.cwd || process.cwd();
+  const exitCode = options.exitCode || 1;
+  const displayCommand =
+    options.displayCommand || formatCommandForDisplay(command, args, options.redactedValues || []);
+  const summary = {
+    title: "Command Failure",
+    details: [
+      ["Failed step", "External command"],
+      ["Command", displayCommand],
+      ["Working directory", cwd],
+      ["Exit code", String(exitCode)],
+    ],
+    nextSteps: uniqueList([`cd ${cwd}`, displayCommand]),
+  };
+
+  if (command === "composer") {
+    const composerAction = args[0] || "command";
+    summary.title = "Composer Failure";
+    summary.details[0] = [
+      "Failed step",
+      composerAction === "require"
+        ? "Composer package install"
+        : composerAction === "update"
+          ? "Composer dependency update"
+          : composerAction === "dump-autoload"
+            ? "Composer autoload refresh"
+            : "Composer command",
+    ];
+    summary.nextSteps = uniqueList([
+      ...summary.nextSteps,
+      "composer validate",
+      composerAction === "require" || composerAction === "update" || composerAction === "install"
+        ? "composer diagnose"
+        : "",
+    ]);
+    return summary;
+  }
+
+  if (command === "npm") {
+    const npmAction = args[0] || "command";
+    summary.title = "npm Failure";
+    summary.details[0] = [
+      "Failed step",
+      npmAction === "install"
+        ? "Frontend dependency install"
+        : npmAction === "run" && args[1] === "build"
+          ? "Frontend asset build"
+          : "npm command",
+    ];
+    summary.nextSteps = uniqueList([
+      ...summary.nextSteps,
+      npmAction === "install" ? "npm install" : "",
+      npmAction === "run" && args[1] === "build" ? "npm install" : "",
+      npmAction === "run" && args[1] === "build" ? "npm run build" : "",
+    ]);
+    return summary;
+  }
+
+  if (command === "php" && Array.isArray(args) && args[0] === "artisan") {
+    const artisanLabel = artisanCommandLabel(args) || "artisan command";
+    summary.title = "Artisan Failure";
+    summary.details[0] = ["Failed step", `Artisan ${artisanLabel}`];
+    summary.nextSteps = uniqueList([
+      ...summary.nextSteps,
+      `php artisan ${artisanLabel}`,
+      artisanLabel === "optimize" || artisanLabel === "optimize:clear"
+        ? ""
+        : "php artisan optimize:clear && php artisan optimize",
+    ]);
+    return summary;
+  }
+
+  return summary;
+}
+
+function buildPermissionFailureSummary(projectPath, permissionReport) {
+  const failedChecks = Array.isArray(permissionReport?.failedChecks)
+    ? permissionReport.failedChecks
+    : [];
+
+  return {
+    title: "Permission Attention Needed",
+    details: [
+      ["Project", projectPath],
+      ["Failed checks", failedChecks.join(", ") || "-"],
+    ],
+    nextSteps: uniqueList([
+      `cd ${projectPath}`,
+      failedChecks.includes("storage") || failedChecks.includes("bootstrap/cache")
+        ? "chmod -R ug+rw storage bootstrap/cache"
+        : "",
+      failedChecks.includes(".env") ? "chmod ug+rw .env" : "",
+      "Verify project ownership and group permissions.",
+    ]),
+  };
+}
+
+function printFailureSummary(summary) {
+  if (!summary) {
+    return;
+  }
+
+  subsection(summary.title);
+  (summary.details || []).forEach(([label, value]) => printKeyValueRow(label, value));
+
+  if (Array.isArray(summary.nextSteps) && summary.nextSteps.length > 0) {
+    detail("Next steps:");
+    summary.nextSteps.forEach((step) => detail(`- ${step}`));
+  }
+}
+
 // Prints the current guided step in manual mode.
 function printStepCard(step, total, title, description = "") {
   section(`Step ${step}/${total} - ${title}`);
@@ -1562,206 +1690,467 @@ function printStepCard(step, total, title, description = "") {
   }
 }
 
+const INSTALLER_MODE_DEFINITIONS = [
+  {
+    id: "auto",
+    description: "Create a new Laravel + Filament project with opinionated defaults",
+  },
+  {
+    id: "manual",
+    description: "Guided step-by-step project setup",
+  },
+  {
+    id: "update",
+    description: "Update the Laravel project in the current directory",
+  },
+  {
+    id: "doctor",
+    description: "Diagnose the Laravel project in the current directory",
+  },
+];
+
+const RUNTIME_OPTION_DEFINITIONS = [
+  {
+    key: "help",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["-h", "--help"],
+  },
+  {
+    key: "nonInteractive",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--non-interactive", "-y", "--yes"],
+    configKey: "nonInteractive",
+    helpGroup: "automation",
+    helpLines: [["--non-interactive", "No prompts, uses defaults/config"]],
+  },
+  {
+    key: "printPlan",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--dry-run", "--print-plan"],
+    configKey: "printPlan",
+    configAliases: ["dryRun"],
+    helpGroup: "common",
+    helpLines: [
+      ["--dry-run", "Resolve input, print the resolved plan, and exit"],
+      ["--print-plan", "Legacy alias for --dry-run"],
+    ],
+  },
+  {
+    key: "configPath",
+    kind: "value",
+    defaultValue: null,
+    cliFlags: ["--config"],
+    valueLabel: "<file>",
+    helpGroup: "common",
+    helpLines: [["--config <file>", "JSON configuration file (default: ./instalar.json)"]],
+  },
+  {
+    key: "logFile",
+    kind: "value",
+    defaultValue: null,
+    cliFlags: ["--log-file"],
+    valueLabel: "<path>",
+    configKey: "logFile",
+    disallowOptionLikeValue: true,
+    emptyValueWarning: "Ignoring empty --log-file value.",
+    missingValueWarning: "--log-file requires a path.",
+    helpGroup: "common",
+    helpLines: [["--log-file <path>", "Write installer output to a plain-text log file"]],
+  },
+  {
+    key: "preset",
+    kind: "value",
+    defaultValue: null,
+    cliFlags: ["--preset"],
+    valueLabel: "<name>",
+    configKey: "preset",
+    normalizeValue: "lowercase",
+    doctorIgnoredCli: true,
+    helpGroup: "common",
+    helpLines: [["--preset <name>", "Package preset: minimal, standard, or full"]],
+  },
+  {
+    key: "mode",
+    kind: "value",
+    defaultValue: null,
+    cliFlags: ["--mode"],
+    valueLabel: "<auto|manual|update|doctor>",
+    configKey: "mode",
+    normalizeValue: "lowercase",
+    validateCli: true,
+    validValues: () => INSTALLER_MODE_DEFINITIONS.map((mode) => mode.id),
+    invalidCliMessage: (value) =>
+      `Invalid --mode value: ${value}. Use auto, manual, update, or doctor.`,
+    helpGroup: "common",
+    helpLines: [["--mode <auto|manual|update|doctor>", ""]],
+  },
+  {
+    key: "skipBoostInstall",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--skip-boost-install"],
+    configKey: "skipBoostInstall",
+    doctorIgnoredCli: true,
+    helpGroup: "common",
+    helpLines: [["--skip-boost-install", "Skip interactive boost:install"]],
+  },
+  {
+    key: "backup",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--backup"],
+    configKey: "backup",
+    doctorIgnoredCli: true,
+    helpGroup: "common",
+    helpLines: [["--backup", "Backup existing target directory before replacing"]],
+  },
+  {
+    key: "startServer",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--start-server"],
+    configKey: "startServer",
+    doctorIgnoredCli: true,
+    helpGroup: "common",
+    helpLines: [["--start-server", "Automatically run composer run dev at the end"]],
+  },
+  {
+    key: "verbose",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--verbose"],
+    configKey: "verbose",
+    helpGroup: "common",
+    helpLines: [["--verbose", "Enable verbose output"]],
+  },
+  {
+    key: "debug",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--debug"],
+    configKey: "debug",
+    helpGroup: "common",
+    helpLines: [["--debug", "Enable debug mode (shows all commands)"]],
+  },
+  {
+    key: "adminGenerate",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--admin-generate"],
+    configKey: "adminGenerate",
+    doctorIgnoredCli: true,
+    helpGroup: "automation",
+    helpLines: [["--admin-generate", "Generate admin password"]],
+  },
+  {
+    key: "continueOnHealthCheckFailure",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--continue-on-health-check-failure"],
+    configKey: "continueOnHealthCheckFailure",
+    doctorIgnoredCli: true,
+    helpGroup: "automation",
+    helpLines: [
+      [
+        "--continue-on-health-check-failure",
+        "Continue unattended runs despite failed health checks",
+      ],
+    ],
+  },
+  {
+    key: "allowDeleteExisting",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--allow-delete-existing"],
+    configKey: "allowDeleteExisting",
+    doctorIgnoredCli: true,
+    helpGroup: "safety",
+    helpLines: [["--allow-delete-existing", "Allow replacing in non-interactive mode"]],
+  },
+  {
+    key: "allowDeleteAnyExisting",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--allow-delete-any-existing"],
+    configKey: "allowDeleteAnyExisting",
+    doctorIgnoredCli: true,
+    helpGroup: "safety",
+    helpLines: [
+      [
+        "--allow-delete-any-existing",
+        "Also allow replacing generic or git-managed directories",
+      ],
+    ],
+  },
+];
+
+const CONFIG_FIELD_DEFINITIONS = {
+  mode: {
+    kind: "enumString",
+    values: () => INSTALLER_MODE_DEFINITIONS.map((mode) => mode.id),
+    invalidMessage: "must be auto, manual, update, or doctor.",
+    allowModeOverride: false,
+  },
+  projectName: { kind: "string", doctorIgnoredConfig: true },
+  appName: { kind: "string", doctorIgnoredConfig: true },
+  projectPath: { kind: "string", doctorIgnoredConfig: true },
+  preset: {
+    kind: "enumString",
+    values: () => PACKAGE_PRESETS.map((preset) => preset.id),
+    invalidMessage: "must be minimal, standard, or full.",
+    doctorIgnoredConfig: true,
+  },
+  allowDeleteExisting: { kind: "boolean", doctorIgnoredConfig: true },
+  allowDeleteAnyExisting: { kind: "boolean", doctorIgnoredConfig: true },
+  backup: { kind: "boolean", doctorIgnoredConfig: true },
+  adminGenerate: { kind: "boolean", doctorIgnoredConfig: true },
+  continueOnHealthCheckFailure: { kind: "boolean", doctorIgnoredConfig: true },
+  dryRun: { kind: "boolean" },
+  printPlan: { kind: "boolean" },
+  logFile: { kind: "string", nonEmpty: true },
+  skipBoostInstall: { kind: "boolean", doctorIgnoredConfig: true },
+  startServer: { kind: "boolean", doctorIgnoredConfig: true },
+  nonInteractive: { kind: "boolean" },
+  verbose: { kind: "boolean" },
+  debug: { kind: "boolean" },
+  database: {
+    kind: "object",
+    doctorIgnoredConfig: true,
+    fields: {
+      connection: {
+        kind: "enumString",
+        values: ["sqlite", "mysql", "pgsql"],
+        invalidMessage: "must be sqlite, mysql, or pgsql.",
+      },
+      host: { kind: "string" },
+      port: { kind: "string" },
+      database: { kind: "string" },
+      username: { kind: "string" },
+      password: { kind: "string" },
+    },
+  },
+  laravelFlags: { kind: "stringArray", doctorIgnoredConfig: true },
+  laravelNewFlags: { kind: "stringArray", doctorIgnoredConfig: true },
+  optionalPackageIds: { kind: "stringArray", doctorIgnoredConfig: true },
+  customNormalPackages: { kind: "stringArray", doctorIgnoredConfig: true },
+  customDevPackages: { kind: "stringArray", doctorIgnoredConfig: true },
+  normalPackages: { kind: "stringArray", doctorIgnoredConfig: true },
+  devPackages: { kind: "stringArray", doctorIgnoredConfig: true },
+  createAdmin: { kind: "boolean", doctorIgnoredConfig: true },
+  gitInit: { kind: "boolean", doctorIgnoredConfig: true },
+  admin: {
+    kind: "object",
+    doctorIgnoredConfig: true,
+    fields: {
+      name: { kind: "string" },
+      email: { kind: "string" },
+      password: { kind: "string" },
+    },
+  },
+  testSuite: {
+    kind: "enumString",
+    values: ["pest", "phpunit"],
+    invalidMessage: "must be pest or phpunit.",
+    doctorIgnoredConfig: true,
+  },
+};
+
+const MODE_OVERRIDE_SECTION_KEYS = ["auto", "manual", "update"];
+const HELP_GROUP_TITLES = {
+  common: "Common options",
+  automation: "Automation",
+  safety: "Safety",
+};
+const NODE_USAGE_EXAMPLES = [
+  "./instalar.sh --mode manual",
+  "./instalar.sh --mode auto --non-interactive --config ./instalar.json",
+  "./instalar.sh --mode doctor --log-file ./doctor.log",
+  "./instalar.sh --mode update --dry-run",
+];
+
+function createRuntimeCliDefaults() {
+  return RUNTIME_OPTION_DEFINITIONS.reduce((defaults, definition) => {
+    defaults[definition.key] = definition.defaultValue;
+    return defaults;
+  }, {});
+}
+
+function getRuntimeOptionDefinition(key) {
+  return RUNTIME_OPTION_DEFINITIONS.find((definition) => definition.key === key) || null;
+}
+
+function getRuntimeConfigOptionValue(key, fileConfig = {}) {
+  const definition = getRuntimeOptionDefinition(key);
+  if (!definition || !definition.configKey) {
+    return undefined;
+  }
+
+  if (fileConfig?.[definition.configKey] !== undefined) {
+    return fileConfig[definition.configKey];
+  }
+
+  for (const alias of definition.configAliases || []) {
+    if (fileConfig?.[alias] !== undefined) {
+      return fileConfig[alias];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeCliValue(definition, value) {
+  const normalized = String(value ?? "").trim();
+  if (definition.normalizeValue === "lowercase") {
+    return normalized.toLowerCase();
+  }
+
+  return normalized;
+}
+
+function assignCliValueOption(options, definition, rawValue) {
+  const normalizedValue = normalizeCliValue(definition, rawValue);
+  if (normalizedValue.length === 0) {
+    if (definition.emptyValueWarning) {
+      warn(definition.emptyValueWarning);
+    }
+    return;
+  }
+
+  options[definition.key] = normalizedValue;
+}
+
+function getDefinitionValues(definition) {
+  const values = definition.values ?? definition.validValues;
+  return typeof values === "function" ? values() : values;
+}
+
+function getAllowedConfigKeys(allowModeOverrides = true) {
+  const keys = Object.entries(CONFIG_FIELD_DEFINITIONS)
+    .filter(([, definition]) => allowModeOverrides || definition.allowModeOverride !== false)
+    .map(([key]) => key);
+
+  if (allowModeOverrides) {
+    keys.push(...MODE_OVERRIDE_SECTION_KEYS);
+  }
+
+  return new Set(keys);
+}
+
+function validateConfigField(value, definition, label) {
+  switch (definition.kind) {
+    case "boolean":
+      validateBooleanConfig(value, label);
+      return value;
+    case "string":
+      validateStringConfig(value, label);
+      if (definition.nonEmpty && value.trim() === "") {
+        throw new Error(`${label} must not be empty.`);
+      }
+      return value;
+    case "stringArray":
+      validateStringArrayConfig(value, label);
+      return value;
+    case "enumString": {
+      validateStringConfig(value, label);
+      const normalizedValue = value.trim().toLowerCase();
+      if (!getDefinitionValues(definition).includes(normalizedValue)) {
+        throw new Error(`${label} ${definition.invalidMessage}`);
+      }
+      return normalizedValue;
+    }
+    case "object": {
+      validatePlainObjectConfig(value, label);
+      const allowedKeys = new Set(Object.keys(definition.fields));
+      for (const key of Object.keys(value)) {
+        if (!allowedKeys.has(key)) {
+          throw new Error(`Unknown configuration key: ${label}.${key}`);
+        }
+      }
+
+      for (const [key, nestedDefinition] of Object.entries(definition.fields)) {
+        if (value[key] !== undefined) {
+          value[key] = validateConfigField(value[key], nestedDefinition, `${label}.${key}`);
+        }
+      }
+      return value;
+    }
+    default:
+      return value;
+  }
+}
+
 // Parses Node-phase CLI arguments and normalizes known flags.
 function parseCliArgs(args) {
-  const options = {
-    help: false,
-    nonInteractive: false,
-    printPlan: false,
-    preset: null,
-    continueOnHealthCheckFailure: false,
-    configPath: null,
-    backup: false,
-    adminGenerate: false,
-    mode: null,
-    allowDeleteExisting: false,
-    allowDeleteAnyExisting: false,
-    logFile: null,
-    skipBoostInstall: false,
-    startServer: false,
-    verbose: false,
-    debug: false,
-  };
+  const options = createRuntimeCliDefaults();
+  const booleanFlags = new Map();
+  const valueFlags = new Map();
+
+  RUNTIME_OPTION_DEFINITIONS.forEach((definition) => {
+    if (definition.kind === "boolean") {
+      definition.cliFlags.forEach((flag) => booleanFlags.set(flag, definition));
+      return;
+    }
+
+    if (definition.kind === "value") {
+      valueFlags.set(definition.cliFlags[0], definition);
+    }
+  });
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
-    if (arg === "-h" || arg === "--help") {
-      options.help = true;
+    const booleanDefinition = booleanFlags.get(arg);
+    if (booleanDefinition) {
+      options[booleanDefinition.key] = true;
       continue;
     }
 
-    if (arg === "--non-interactive" || arg === "-y" || arg === "--yes") {
-      options.nonInteractive = true;
-      continue;
-    }
-
-    if (arg === "--dry-run" || arg === "--print-plan") {
-      options.printPlan = true;
-      continue;
-    }
-
-    if (arg === "--skip-boost-install") {
-      options.skipBoostInstall = true;
-      continue;
-    }
-
-    if (arg === "--continue-on-health-check-failure") {
-      options.continueOnHealthCheckFailure = true;
-      continue;
-    }
-
-    if (arg === "--backup") {
-      options.backup = true;
-      continue;
-    }
-
-    if (arg === "--admin-generate") {
-      options.adminGenerate = true;
-      continue;
-    }
-
-    if (arg === "--allow-delete-existing") {
-      options.allowDeleteExisting = true;
-      continue;
-    }
-
-    if (arg === "--allow-delete-any-existing") {
-      options.allowDeleteAnyExisting = true;
-      continue;
-    }
-
-    if (arg === "--start-server") {
-      options.startServer = true;
-      continue;
-    }
-
-    if (arg === "--verbose") {
-      options.verbose = true;
-      continue;
-    }
-
-    if (arg === "--debug") {
-      options.debug = true;
-      continue;
-    }
-
-    if (arg.startsWith("--config=")) {
-      options.configPath = arg.slice("--config=".length);
-      continue;
-    }
-
-    if (arg.startsWith("--log-file=")) {
-      const value = arg.slice("--log-file=".length).trim();
-      if (value) {
-        options.logFile = value;
-      } else {
-        warn("Ignoring empty --log-file value.");
+    let matchedAssignment = false;
+    for (const definition of RUNTIME_OPTION_DEFINITIONS) {
+      if (definition.kind !== "value") {
+        continue;
       }
-      continue;
-    }
 
-    if (arg === "--config") {
-      const next = args[index + 1];
-      if (next) {
-        options.configPath = next;
-        index += 1;
+      const assignmentPrefix = `${definition.cliFlags[0]}=`;
+      if (arg.startsWith(assignmentPrefix)) {
+        assignCliValueOption(options, definition, arg.slice(assignmentPrefix.length));
+        matchedAssignment = true;
+        break;
       }
+    }
+
+    if (matchedAssignment) {
       continue;
     }
 
-    if (arg === "--log-file") {
+    const valueDefinition = valueFlags.get(arg);
+    if (valueDefinition) {
       const next = args[index + 1];
-      if (next && !next.startsWith("--")) {
-        options.logFile = next.trim();
+      if (next && (!valueDefinition.disallowOptionLikeValue || !next.startsWith("--"))) {
+        assignCliValueOption(options, valueDefinition, next);
         index += 1;
-      } else {
-        warn("--log-file requires a path.");
-      }
-      continue;
-    }
-
-    if (arg.startsWith("--mode=")) {
-      options.mode = arg.slice("--mode=".length);
-      continue;
-    }
-
-    if (arg.startsWith("--preset=")) {
-      options.preset = arg.slice("--preset=".length);
-      continue;
-    }
-
-    if (arg === "--preset") {
-      const next = args[index + 1];
-      if (next) {
-        options.preset = next;
-        index += 1;
-      }
-      continue;
-    }
-
-    if (arg === "--mode") {
-      const next = args[index + 1];
-      if (next) {
-        options.mode = next;
-        index += 1;
+      } else if (valueDefinition.missingValueWarning) {
+        warn(valueDefinition.missingValueWarning);
       }
     }
   }
 
-  if (options.mode) {
-    options.mode = options.mode.toLowerCase();
-  }
+  RUNTIME_OPTION_DEFINITIONS.forEach((definition) => {
+    if (!definition.validateCli || options[definition.key] === null) {
+      return;
+    }
 
-  if (!["auto", "manual", "update", "doctor", null].includes(options.mode)) {
-    warn(`Invalid --mode value: ${options.mode}. Use auto, manual, update, or doctor.`);
-    options.mode = null;
-  }
+    if (!getDefinitionValues(definition).includes(options[definition.key])) {
+      warn(definition.invalidCliMessage(options[definition.key]));
+      options[definition.key] = definition.defaultValue;
+    }
+  });
 
   return options;
 }
-
-const VALID_INSTALLER_MODES = new Set(["auto", "manual", "update", "doctor"]);
-const VALID_DATABASE_CONNECTIONS = new Set(["sqlite", "mysql", "pgsql"]);
-const VALID_TEST_SUITES = new Set(["pest", "phpunit"]);
-const ROOT_CONFIG_KEYS = new Set([
-  "mode",
-  "projectName",
-  "appName",
-  "projectPath",
-  "preset",
-  "allowDeleteExisting",
-  "allowDeleteAnyExisting",
-  "backup",
-  "adminGenerate",
-  "continueOnHealthCheckFailure",
-  "dryRun",
-  "printPlan",
-  "logFile",
-  "skipBoostInstall",
-  "startServer",
-  "nonInteractive",
-  "verbose",
-  "debug",
-  "database",
-  "laravelFlags",
-  "laravelNewFlags",
-  "optionalPackageIds",
-  "customNormalPackages",
-  "customDevPackages",
-  "normalPackages",
-  "devPackages",
-  "createAdmin",
-  "gitInit",
-  "admin",
-  "testSuite",
-  "auto",
-  "manual",
-  "update",
-]);
-const MODE_OVERRIDE_KEYS = new Set(
-  [...ROOT_CONFIG_KEYS].filter((key) => !["auto", "manual", "update", "mode"].includes(key)),
-);
 
 function validateBooleanConfig(value, label) {
   if (typeof value !== "boolean") {
@@ -1790,142 +2179,25 @@ function validatePlainObjectConfig(value, label) {
 function validateInstallerConfig(config, label = "config", allowModeOverrides = true) {
   validatePlainObjectConfig(config, label);
 
-  const allowedKeys = allowModeOverrides ? ROOT_CONFIG_KEYS : MODE_OVERRIDE_KEYS;
+  const allowedKeys = getAllowedConfigKeys(allowModeOverrides);
   for (const key of Object.keys(config)) {
     if (!allowedKeys.has(key)) {
       throw new Error(`Unknown configuration key: ${label}.${key}`);
     }
   }
 
-  const booleanKeys = [
-    "allowDeleteExisting",
-    "allowDeleteAnyExisting",
-    "backup",
-    "adminGenerate",
-    "continueOnHealthCheckFailure",
-    "dryRun",
-    "printPlan",
-    "skipBoostInstall",
-    "startServer",
-    "nonInteractive",
-    "verbose",
-    "debug",
-    "createAdmin",
-    "gitInit",
-  ];
-  booleanKeys.forEach((key) => {
-    if (config[key] !== undefined) {
-      validateBooleanConfig(config[key], `${label}.${key}`);
-    }
-  });
-
-  const stringKeys = ["projectName", "appName", "projectPath", "logFile"];
-  stringKeys.forEach((key) => {
-    if (config[key] !== undefined) {
-      validateStringConfig(config[key], `${label}.${key}`);
-    }
-  });
-
-  if (config.logFile !== undefined && config.logFile.trim() === "") {
-    throw new Error(`${label}.logFile must not be empty.`);
-  }
-
-  const arrayKeys = [
-    "laravelFlags",
-    "laravelNewFlags",
-    "optionalPackageIds",
-    "customNormalPackages",
-    "customDevPackages",
-    "normalPackages",
-    "devPackages",
-  ];
-  arrayKeys.forEach((key) => {
-    if (config[key] !== undefined) {
-      validateStringArrayConfig(config[key], `${label}.${key}`);
-    }
-  });
-
-  if (config.mode !== undefined) {
-    validateStringConfig(config.mode, `${label}.mode`);
-    const normalizedMode = config.mode.trim().toLowerCase();
-    if (!VALID_INSTALLER_MODES.has(normalizedMode)) {
-      throw new Error(`${label}.mode must be auto, manual, update, or doctor.`);
-    }
-    config.mode = normalizedMode;
-  }
-
-  if (config.preset !== undefined) {
-    validateStringConfig(config.preset, `${label}.preset`);
-    const normalizedPreset = config.preset.trim().toLowerCase();
-    if (!PACKAGE_PRESETS.some((preset) => preset.id === normalizedPreset)) {
-      throw new Error(`${label}.preset must be minimal, standard, or full.`);
-    }
-    config.preset = normalizedPreset;
-  }
-
-  if (config.testSuite !== undefined) {
-    validateStringConfig(config.testSuite, `${label}.testSuite`);
-    const normalizedTestSuite = config.testSuite.trim().toLowerCase();
-    if (!VALID_TEST_SUITES.has(normalizedTestSuite)) {
-      throw new Error(`${label}.testSuite must be pest or phpunit.`);
-    }
-    config.testSuite = normalizedTestSuite;
-  }
-
-  if (config.database !== undefined) {
-    validatePlainObjectConfig(config.database, `${label}.database`);
-    const allowedDatabaseKeys = new Set([
-      "connection",
-      "host",
-      "port",
-      "database",
-      "username",
-      "password",
-    ]);
-    for (const key of Object.keys(config.database)) {
-      if (!allowedDatabaseKeys.has(key)) {
-        throw new Error(`Unknown configuration key: ${label}.database.${key}`);
-      }
+  for (const [key, value] of Object.entries(config)) {
+    if (MODE_OVERRIDE_SECTION_KEYS.includes(key)) {
+      validateInstallerConfig(value, `${label}.${key}`, false);
+      continue;
     }
 
-    if (config.database.connection !== undefined) {
-      validateStringConfig(config.database.connection, `${label}.database.connection`);
-      const normalizedConnection = config.database.connection.trim().toLowerCase();
-      if (!VALID_DATABASE_CONNECTIONS.has(normalizedConnection)) {
-        throw new Error(`${label}.database.connection must be sqlite, mysql, or pgsql.`);
-      }
-      config.database.connection = normalizedConnection;
+    const definition = CONFIG_FIELD_DEFINITIONS[key];
+    if (!definition || value === undefined) {
+      continue;
     }
 
-    ["host", "port", "database", "username", "password"].forEach((key) => {
-      if (config.database[key] !== undefined) {
-        validateStringConfig(config.database[key], `${label}.database.${key}`);
-      }
-    });
-  }
-
-  if (config.admin !== undefined) {
-    validatePlainObjectConfig(config.admin, `${label}.admin`);
-    const allowedAdminKeys = new Set(["name", "email", "password"]);
-    for (const key of Object.keys(config.admin)) {
-      if (!allowedAdminKeys.has(key)) {
-        throw new Error(`Unknown configuration key: ${label}.admin.${key}`);
-      }
-    }
-
-    ["name", "email", "password"].forEach((key) => {
-      if (config.admin[key] !== undefined) {
-        validateStringConfig(config.admin[key], `${label}.admin.${key}`);
-      }
-    });
-  }
-
-  if (allowModeOverrides) {
-    ["auto", "manual", "update"].forEach((mode) => {
-      if (config[mode] !== undefined) {
-        validateInstallerConfig(config[mode], `${label}.${mode}`, false);
-      }
-    });
+    config[key] = validateConfigField(value, definition, `${label}.${key}`);
   }
 }
 
@@ -1955,15 +2227,22 @@ function loadInstallerConfig(configPath) {
 function resolveRuntime(cliOptions, fileConfig, configPath) {
   // CLI values always win, but config can still provide defaults for unattended runs.
   // dryRun is treated as a backwards-compatible alias for printPlan.
-  const resolvedMode = (cliOptions.mode || fileConfig?.mode || "").toLowerCase() || null;
-  const requestedPreset = cliOptions.preset || fileConfig?.preset || "standard";
+  const resolvedMode =
+    (cliOptions.mode || getRuntimeConfigOptionValue("mode", fileConfig) || "").toLowerCase() ||
+    null;
+  const requestedPreset =
+    cliOptions.preset || getRuntimeConfigOptionValue("preset", fileConfig) || "standard";
   const resolvedPreset = resolvePackagePresetName(requestedPreset);
-  const nonInteractive = Boolean(cliOptions.nonInteractive || fileConfig?.nonInteractive === true);
-  const logFile = resolveLogFilePath(cliOptions.logFile, fileConfig?.logFile, configPath);
+  const nonInteractive = Boolean(
+    cliOptions.nonInteractive || getRuntimeConfigOptionValue("nonInteractive", fileConfig) === true,
+  );
+  const logFile = resolveLogFilePath(
+    cliOptions.logFile,
+    getRuntimeConfigOptionValue("logFile", fileConfig),
+    configPath,
+  );
   const printPlan = Boolean(
-    cliOptions.printPlan ||
-      fileConfig?.printPlan === true ||
-      fileConfig?.dryRun === true,
+    cliOptions.printPlan || getRuntimeConfigOptionValue("printPlan", fileConfig) === true,
   );
 
   return {
@@ -1972,28 +2251,34 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     preset: resolvedPreset,
     continueOnHealthCheckFailure: Boolean(
       cliOptions.continueOnHealthCheckFailure ||
-        fileConfig?.continueOnHealthCheckFailure === true,
+        getRuntimeConfigOptionValue("continueOnHealthCheckFailure", fileConfig) === true,
     ),
-    backup: Boolean(cliOptions.backup || fileConfig?.backup === true),
-    adminGenerate: Boolean(cliOptions.adminGenerate || fileConfig?.adminGenerate === true),
+    backup: Boolean(cliOptions.backup || getRuntimeConfigOptionValue("backup", fileConfig) === true),
+    adminGenerate: Boolean(
+      cliOptions.adminGenerate || getRuntimeConfigOptionValue("adminGenerate", fileConfig) === true,
+    ),
     allowDeleteExisting: Boolean(
-      cliOptions.allowDeleteExisting || fileConfig?.allowDeleteExisting === true,
+      cliOptions.allowDeleteExisting ||
+        getRuntimeConfigOptionValue("allowDeleteExisting", fileConfig) === true,
     ),
     allowDeleteAnyExisting: Boolean(
-      cliOptions.allowDeleteAnyExisting || fileConfig?.allowDeleteAnyExisting === true,
+      cliOptions.allowDeleteAnyExisting ||
+        getRuntimeConfigOptionValue("allowDeleteAnyExisting", fileConfig) === true,
     ),
     logFile,
     skipBoostInstall: Boolean(
       cliOptions.skipBoostInstall ||
-        fileConfig?.skipBoostInstall === true ||
+        getRuntimeConfigOptionValue("skipBoostInstall", fileConfig) === true ||
         nonInteractive,
     ),
-    startServer: Boolean(cliOptions.startServer || fileConfig?.startServer === true),
-    mode: ["auto", "manual", "update", "doctor"].includes(resolvedMode) ? resolvedMode : null,
+    startServer: Boolean(
+      cliOptions.startServer || getRuntimeConfigOptionValue("startServer", fileConfig) === true,
+    ),
+    mode: getDefinitionValues(CONFIG_FIELD_DEFINITIONS.mode).includes(resolvedMode) ? resolvedMode : null,
     configPath,
     config: fileConfig || {},
-    verbose: Boolean(cliOptions.verbose || fileConfig?.verbose === true),
-    debug: Boolean(cliOptions.debug || fileConfig?.debug === true),
+    verbose: Boolean(cliOptions.verbose || getRuntimeConfigOptionValue("verbose", fileConfig) === true),
+    debug: Boolean(cliOptions.debug || getRuntimeConfigOptionValue("debug", fileConfig) === true),
   };
 }
 
@@ -2024,60 +2309,21 @@ function resolveLogFilePath(cliValue, configValue, configPath) {
 }
 
 function warnDoctorModeIgnoredOptions(cliOptions = {}, fileConfig = {}) {
-  const ignoredCliOptions = [];
-  const ignoredConfigKeys = [];
-  const addCliWarning = (condition, label) => {
-    if (condition) {
-      ignoredCliOptions.push(label);
-    }
-  };
+  const ignoredCliOptions = RUNTIME_OPTION_DEFINITIONS
+    .filter((definition) => definition.doctorIgnoredCli === true)
+    .filter((definition) =>
+      definition.kind === "boolean"
+        ? cliOptions[definition.key] === true
+        : cliOptions[definition.key] !== definition.defaultValue,
+    )
+    .map((definition) => definition.cliFlags[0]);
 
-  addCliWarning(cliOptions.preset !== null, "--preset");
-  addCliWarning(cliOptions.skipBoostInstall === true, "--skip-boost-install");
-  addCliWarning(
-    cliOptions.continueOnHealthCheckFailure === true,
-    "--continue-on-health-check-failure",
-  );
-  addCliWarning(cliOptions.backup === true, "--backup");
-  addCliWarning(cliOptions.adminGenerate === true, "--admin-generate");
-  addCliWarning(cliOptions.allowDeleteExisting === true, "--allow-delete-existing");
-  addCliWarning(cliOptions.allowDeleteAnyExisting === true, "--allow-delete-any-existing");
-  addCliWarning(cliOptions.startServer === true, "--start-server");
-
-  const ignoredDoctorConfigKeys = [
-    "projectName",
-    "appName",
-    "projectPath",
-    "preset",
-    "allowDeleteExisting",
-    "allowDeleteAnyExisting",
-    "backup",
-    "adminGenerate",
-    "continueOnHealthCheckFailure",
-    "skipBoostInstall",
-    "startServer",
-    "database",
-    "laravelFlags",
-    "laravelNewFlags",
-    "optionalPackageIds",
-    "customNormalPackages",
-    "customDevPackages",
-    "normalPackages",
-    "devPackages",
-    "createAdmin",
-    "gitInit",
-    "admin",
-    "testSuite",
-    "auto",
-    "manual",
-    "update",
-  ];
-
-  ignoredDoctorConfigKeys.forEach((key) => {
-    if (Object.prototype.hasOwnProperty.call(fileConfig, key)) {
-      ignoredConfigKeys.push(key);
-    }
-  });
+  const ignoredConfigKeys = [
+    ...Object.entries(CONFIG_FIELD_DEFINITIONS)
+      .filter(([, definition]) => definition.doctorIgnoredConfig === true)
+      .map(([key]) => key),
+    ...MODE_OVERRIDE_SECTION_KEYS,
+  ].filter((key) => Object.prototype.hasOwnProperty.call(fileConfig, key));
 
   if (ignoredCliOptions.length > 0) {
     warn(`Doctor mode ignores install-only CLI options: ${ignoredCliOptions.join(", ")}.`);
@@ -2762,12 +3008,19 @@ async function runCommand(command, args, options = {}) {
     const exitCode = error.exitCode || 1;
     const failureMessage = `Command failed (exit ${exitCode}): ${cmdStr}`;
     const failureSnippet = buildCommandFailureSnippet(error);
+    const failureSummary = buildCommandFailureSummary(command, args, {
+      cwd,
+      exitCode,
+      displayCommand: cmdStr,
+      redactedValues,
+    });
 
     if (required) {
       // Required failures bubble up with an attached snippet so the top-level
       // error handler can print actionable context without re-running anything.
       error.message = failureMessage;
       error.outputSnippet = failureSnippet;
+      error.failureSummary = failureSummary;
       throw error;
     }
     if (warnOnFailure) {
@@ -4625,11 +4878,12 @@ function summarizeCheckResults(results) {
   let repairedCount = 0;
 
   for (const result of results) {
+    if (result.repaired) {
+      repairedCount += 1;
+    }
+
     if (result.ok) {
       passedCount += 1;
-      if (result.repaired) {
-        repairedCount += 1;
-      }
       continue;
     }
 
@@ -4648,6 +4902,97 @@ function summarizeCheckResults(results) {
     totalCount: results.length,
     failedChecks,
   };
+}
+
+function doctorRepairAllowed(runtimeOptions, repairMode = "none") {
+  return (
+    repairMode === "doctor" &&
+    !runtimeOptions.nonInteractive &&
+    !runtimeOptions.printPlan
+  );
+}
+
+async function restoreEnvFromExample(projectPath, runtimeOptions, repairMode = "none") {
+  const envPath = path.join(projectPath, ".env");
+  const envExamplePath = path.join(projectPath, ".env.example");
+
+  if (fs.existsSync(envPath)) {
+    return false;
+  }
+
+  if (!fs.existsSync(envExamplePath)) {
+    warn(".env.example not found - cannot restore .env automatically");
+    return false;
+  }
+
+  if (!doctorRepairAllowed(runtimeOptions, repairMode)) {
+    return false;
+  }
+
+  const shouldRestore = await askYesNo("Restore .env from .env.example now?", true);
+  if (!shouldRestore) {
+    return false;
+  }
+
+  try {
+    fs.copyFileSync(envExamplePath, envPath);
+    ok(".env restored from .env.example");
+    return true;
+  } catch {
+    warn(".env restore failed - copy .env.example manually");
+    return false;
+  }
+}
+
+async function runDoctorCacheRepair(projectPath, runtimeOptions, healthChecks, results, repairMode = "none") {
+  if (!doctorRepairAllowed(runtimeOptions, repairMode)) {
+    return results;
+  }
+
+  const repairableIndexes = healthChecks
+    .map((healthCheck, index) =>
+      healthCheck.doctorRepair === "cache-reset" && !results[index].ok ? index : -1,
+    )
+    .filter((index) => index >= 0);
+
+  if (repairableIndexes.length === 0) {
+    return results;
+  }
+
+  const shouldRepair = await askYesNo("Clear and rebuild Laravel caches now?", true);
+  if (!shouldRepair) {
+    return results;
+  }
+
+  const clearResult = await runCommand("php", ["artisan", "optimize:clear", "--no-interaction"], {
+    cwd: projectPath,
+    required: false,
+    warnOnFailure: false,
+  });
+  const optimizeResult = await runCommand("php", ["artisan", "optimize", "--no-interaction"], {
+    cwd: projectPath,
+    required: false,
+    warnOnFailure: false,
+  });
+
+  if (!clearResult.success || !optimizeResult.success) {
+    warn("Cache repair failed - run 'php artisan optimize:clear && php artisan optimize' manually");
+    return results;
+  }
+
+  ok("Laravel caches cleared and rebuilt successfully");
+
+  let repairRecorded = false;
+  for (const index of repairableIndexes) {
+    const rerunResult = await healthChecks[index].run();
+    if (rerunResult.ok) {
+      rerunResult.repaired = !repairRecorded;
+      repairRecorded = true;
+    }
+    results[index] = rerunResult;
+  }
+
+  return results;
 }
 
 async function runStorageLinkHealthCheck(projectPath, runtimeOptions, repairMode = "none") {
@@ -4735,7 +5080,7 @@ async function runStorageLinkHealthCheck(projectPath, runtimeOptions, repairMode
 
   warn("Storage link missing");
 
-  if (repairMode === "doctor" && !runtimeOptions.nonInteractive && !runtimeOptions.printPlan) {
+  if (doctorRepairAllowed(runtimeOptions, repairMode)) {
     const shouldRepair = await askYesNo("Create storage link now?", true);
     if (!shouldRepair) {
       return {
@@ -4782,12 +5127,22 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
     {
       name: "APP_KEY",
       run: async () => {
+        let envRestored = false;
         if (!fs.existsSync(envPath)) {
           warn(".env file not found");
+
+          envRestored = await restoreEnvFromExample(
+            projectPath,
+            runtimeOptions,
+            options.repairMode || "none",
+          );
+        }
+
+        if (!fs.existsSync(envPath)) {
           return {
             name: "APP_KEY",
             ok: false,
-            repaired: false,
+            repaired: envRestored,
             failures: [".env"],
           };
         }
@@ -4796,14 +5151,14 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
         const appKeyMatch = envContent.match(/^APP_KEY=base64:[A-Za-z0-9+\/=]+$/m);
         if (appKeyMatch) {
           ok("APP_KEY is set");
-          return { name: "APP_KEY", ok: true, repaired: false, failures: [] };
+          return { name: "APP_KEY", ok: true, repaired: envRestored, failures: [] };
         }
 
         warn("APP_KEY is missing - run 'php artisan key:generate'");
         return {
           name: "APP_KEY",
           ok: false,
-          repaired: false,
+          repaired: envRestored,
           failures: ["APP_KEY"],
         };
       },
@@ -4866,6 +5221,7 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
     },
     {
       name: "Artisan about",
+      doctorRepair: "cache-reset",
       run: async () => {
         const result = await runCommand("php", ["artisan", "about", "--no-interaction"], {
           cwd: projectPath,
@@ -4894,6 +5250,7 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
     },
     {
       name: "Migration status",
+      doctorRepair: "cache-reset",
       run: async () => {
         const result = await runCommand("php", ["artisan", "migrate:status", "--no-interaction"], {
           cwd: projectPath,
@@ -4922,6 +5279,7 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
     },
     {
       name: "Route list",
+      doctorRepair: "cache-reset",
       run: async () => {
         const result = await runCommand("php", ["artisan", "route:list", "--no-interaction"], {
           cwd: projectPath,
@@ -4977,6 +5335,13 @@ async function runHealthCheckSuite(projectPath, runtimeOptions = state.runtime, 
     results.push(await healthCheck.run());
   }
 
+  await runDoctorCacheRepair(
+    projectPath,
+    runtimeOptions,
+    healthChecks,
+    results,
+    options.repairMode || "none",
+  );
   return summarizeCheckResults(results);
 }
 
@@ -5102,6 +5467,12 @@ function collectDoctorSuggestions(healthReport, permissionReport) {
   addSuggestion(failedChecks.has("Storage link"), "Run `php artisan storage:link`.");
   addSuggestion(failedChecks.has("Composer"), "Run `composer validate` and fix composer.json errors.");
   addSuggestion(
+    failedChecks.has("php artisan about") ||
+      failedChecks.has("php artisan migrate:status") ||
+      failedChecks.has("php artisan route:list"),
+    "Run `php artisan optimize:clear && php artisan optimize`.",
+  );
+  addSuggestion(
     failedChecks.has("php artisan about"),
     "Run `php artisan about` and fix the reported Laravel boot error.",
   );
@@ -5162,7 +5533,10 @@ function printDoctorSummary(projectPath, healthReport, permissionReport) {
 
 // Verifies essential filesystem permissions and optionally starts the dev server.
 async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = state.runtime) {
-  runPermissionChecks(projectPath, { sectionTitle: "Permissions" });
+  const permissionReport = runPermissionChecks(projectPath, { sectionTitle: "Permissions" });
+  if (permissionReport.failedChecks.length > 0) {
+    printFailureSummary(buildPermissionFailureSummary(projectPath, permissionReport));
+  }
 
   let startServer = false;
   if (runtimeOptions.nonInteractive) {
@@ -5234,6 +5608,10 @@ async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
   printFinalNotes(projectPath, runtimeOptions);
 }
 
+function formatNodeUsageLine(label, description = "") {
+  return description ? `  ${label.padEnd(24)} ${description}` : `  ${label}`;
+}
+
 // Prints Node-phase usage help.
 function printNodeUsage() {
   console.log(`INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})`);
@@ -5244,40 +5622,25 @@ function printNodeUsage() {
   console.log("  ./instalar.sh --non-interactive --config instalar.json");
   console.log("");
   console.log("Modes:");
-  console.log("  auto                    Create a new Laravel + Filament project with opinionated defaults");
-  console.log("  manual                  Guided step-by-step project setup");
-  console.log("  update                  Update the Laravel project in the current directory");
-  console.log("  doctor                  Diagnose the Laravel project in the current directory");
+  INSTALLER_MODE_DEFINITIONS.forEach((mode) => {
+    console.log(formatNodeUsageLine(mode.id, mode.description));
+  });
   console.log("");
-  console.log("Common options:");
-  console.log("  --mode <auto|manual|update|doctor>");
-  console.log("  --config <file>         JSON configuration file (default: ./instalar.json)");
-  console.log("  --dry-run               Resolve input, print the resolved plan, and exit");
-  console.log("  --print-plan            Legacy alias for --dry-run");
-  console.log("  --log-file <path>       Write installer output to a plain-text log file");
-  console.log("  --preset <name>         Package preset: minimal, standard, or full");
-  console.log("  --skip-boost-install    Skip interactive boost:install");
-  console.log("  --backup                Backup existing target directory before replacing");
-  console.log("  --start-server          Automatically run composer run dev at the end");
-  console.log("  --verbose               Enable verbose output");
-  console.log("  --debug                 Enable debug mode (shows all commands)");
-  console.log("");
-  console.log("Automation:");
-  console.log("  --non-interactive       No prompts, uses defaults/config");
-  console.log("  --admin-generate        Generate admin password");
-  console.log("  --continue-on-health-check-failure");
-  console.log("                          Continue unattended runs despite failed health checks");
-  console.log("");
-  console.log("Safety:");
-  console.log("  --allow-delete-existing Allow replacing in non-interactive mode");
-  console.log("  --allow-delete-any-existing");
-  console.log("                          Also allow replacing generic or git-managed directories");
-  console.log("");
+  Object.entries(HELP_GROUP_TITLES).forEach(([groupKey, title]) => {
+    console.log(`${title}:`);
+    RUNTIME_OPTION_DEFINITIONS
+      .filter((definition) => definition.helpGroup === groupKey)
+      .forEach((definition) => {
+        (definition.helpLines || []).forEach(([label, description]) => {
+          console.log(formatNodeUsageLine(label, description));
+        });
+      });
+    console.log("");
+  });
   console.log("Examples:");
-  console.log("  ./instalar.sh --mode manual");
-  console.log("  ./instalar.sh --mode auto --non-interactive --config ./instalar.json");
-  console.log("  ./instalar.sh --mode doctor --log-file ./doctor.log");
-  console.log("  ./instalar.sh --mode update --dry-run");
+  NODE_USAGE_EXAMPLES.forEach((example) => {
+    console.log(`  ${example}`);
+  });
 }
 
 // Node-phase main entrypoint.
@@ -5489,6 +5852,9 @@ async function main() {
 main().catch((error) => {
   section("Error");
   fail(error.message || String(error));
+  if (error.failureSummary) {
+    printFailureSummary(error.failureSummary);
+  }
   if (error.outputSnippet) {
     printCommandFailureSnippet(error.outputSnippet);
   }

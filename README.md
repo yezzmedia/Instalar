@@ -15,7 +15,7 @@ Made with ❤️ by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*
 - Bash entrypoint for dependency checks/install/update
 - Embedded Node installer for interactive and configurable project setup
 
-Current version: **0.1.13** (Rosie)
+Current version: **0.1.14** (Rosie)
 
 ---
 
@@ -27,6 +27,7 @@ Current version: **0.1.13** (Rosie)
 - Prints a resolved install or update plan before execution.
 - Supports preview-only runs and plain-text installer logs.
 - Hides sensitive values in prompts and logs wherever possible.
+- Prints concise recovery summaries for failed Composer, npm, Artisan, and permission checks.
 - Checks system dependencies with versions (`php`, `composer`, `laravel`, `node`, `npm`).
 - Installs missing dependencies and can apply available dependency updates.
 - Supports package presets (`minimal`, `standard`, `full`) and richer optional package labels.
@@ -34,6 +35,7 @@ Current version: **0.1.13** (Rosie)
 - Runs build/optimize steps in a practical order.
 - Runs post-install health checks and permission checks.
 - Diagnoses the current Laravel project with Doctor mode and suggests next steps.
+- Doctor mode can now restore `.env` from `.env.example` and try a safe cache-clear/rebuild repair for failing Artisan health checks.
 - Can optionally run `composer run dev` at the end.
 
 ---
