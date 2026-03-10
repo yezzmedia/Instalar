@@ -4,7 +4,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { loadInstallerHarness } = require("./support/instalar-harness.cjs");
+const {
+  createProjectFixture,
+  loadInstallerHarness,
+} = require("./support/instalar-harness.cjs");
 
 test("runtime options merge the health-check override from CLI and JSON config", () => {
   const harness = loadInstallerHarness();
@@ -262,4 +265,50 @@ test("main prints the grouped manual dry-run review from config in non-interacti
   ]);
   assert.ok(details.some((message) => /Name:\s+CLI Review App$/.test(message)));
   assert.ok(oks.includes("Plan preview only. No project files will be modified."));
+});
+
+test("main runs an unattended update dry-run for the current Laravel project", async () => {
+  const harness = loadInstallerHarness();
+  const projectPath = createProjectFixture();
+  const originalCwd = harness.process.cwd;
+  const details = [];
+  const oks = [];
+  const sections = [];
+  const subsections = [];
+
+  harness.process.argv = [
+    "node",
+    "instalar.sh",
+    "--mode",
+    "update",
+    "--non-interactive",
+    "--dry-run",
+  ];
+  harness.process.cwd = () => projectPath;
+  harness.setSection((title) => {
+    sections.push(title);
+  });
+  harness.setSubsection((title) => {
+    subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    details.push(message);
+  });
+  harness.setInfo(() => {});
+  harness.setOk((message) => {
+    oks.push(message);
+  });
+
+  try {
+    await harness.main();
+  } finally {
+    harness.process.cwd = originalCwd;
+  }
+
+  assert.deepEqual(sections, ["Update Plan"]);
+  assert.deepEqual(subsections, ["Project", "Runtime", "Detected Packages"]);
+  assert.ok(details.some((message) => new RegExp(`Project:\\s+${projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(message)));
+  assert.ok(details.some((message) => /Dry run:\s+yes$/.test(message)));
+  assert.ok(oks.includes("Plan preview only. No project files will be modified."));
+  assert.equal(fs.existsSync(path.join(projectPath, "public", "storage")), true);
 });

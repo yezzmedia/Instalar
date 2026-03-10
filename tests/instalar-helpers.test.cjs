@@ -242,3 +242,76 @@ test("printUpdatePlan reports runtime details without mutating project state", (
   assert.ok(events.details.includes("- laravel/pulse"));
   assert.ok(events.oks.includes("Plan preview only. No project files will be modified."));
 });
+
+test("failure summary helpers describe recovery steps for command and permission issues", () => {
+  const harness = loadInstallerHarness();
+  const events = {
+    details: [],
+    subsections: [],
+  };
+
+  harness.setSubsection((title) => {
+    events.subsections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
+  });
+
+  const composerSummary = harness.buildCommandFailureSummary(
+    "composer",
+    ["update", "--no-interaction"],
+    {
+      cwd: "/tmp/demo-project",
+      exitCode: 2,
+    },
+  );
+  const npmSummary = harness.buildCommandFailureSummary(
+    "npm",
+    ["run", "build"],
+    {
+      cwd: "/tmp/demo-project",
+      exitCode: 1,
+    },
+  );
+  const artisanSummary = harness.buildCommandFailureSummary(
+    "php",
+    ["artisan", "migrate", "--force", "--no-interaction"],
+    {
+      cwd: "/tmp/demo-project",
+      exitCode: 255,
+    },
+  );
+  const permissionSummary = harness.buildPermissionFailureSummary("/tmp/demo-project", {
+    failedChecks: ["storage", ".env"],
+  });
+
+  assert.equal(composerSummary.title, "Composer Failure");
+  assert.equal(composerSummary.details[0][0], "Failed step");
+  assert.equal(composerSummary.details[0][1], "Composer dependency update");
+  assert.ok(composerSummary.nextSteps.includes("composer validate"));
+  assert.ok(composerSummary.nextSteps.includes("composer diagnose"));
+
+  assert.equal(npmSummary.title, "npm Failure");
+  assert.equal(npmSummary.details[0][0], "Failed step");
+  assert.equal(npmSummary.details[0][1], "Frontend asset build");
+  assert.ok(npmSummary.nextSteps.includes("npm install"));
+  assert.ok(npmSummary.nextSteps.includes("npm run build"));
+
+  assert.equal(artisanSummary.title, "Artisan Failure");
+  assert.equal(artisanSummary.details[0][0], "Failed step");
+  assert.equal(artisanSummary.details[0][1], "Artisan migrate");
+  assert.ok(artisanSummary.nextSteps.includes("php artisan migrate"));
+  assert.ok(artisanSummary.nextSteps.includes("php artisan optimize:clear && php artisan optimize"));
+
+  assert.equal(permissionSummary.title, "Permission Attention Needed");
+  assert.ok(permissionSummary.nextSteps.includes("chmod -R ug+rw storage bootstrap/cache"));
+  assert.ok(permissionSummary.nextSteps.includes("chmod ug+rw .env"));
+
+  harness.printFailureSummary(permissionSummary);
+
+  assert.deepEqual(events.subsections, ["Permission Attention Needed"]);
+  assert.ok(events.details.some((message) => /Project:\s+\/tmp\/demo-project$/.test(message)));
+  assert.ok(events.details.some((message) => /Failed checks:\s+storage, \.env$/.test(message)));
+  assert.ok(events.details.includes("Next steps:"));
+  assert.ok(events.details.includes("- chmod -R ug+rw storage bootstrap/cache"));
+});

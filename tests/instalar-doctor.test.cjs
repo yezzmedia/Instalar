@@ -73,7 +73,7 @@ test("warnDoctorModeIgnoredOptions reports install-only CLI options and config k
   );
 
   assert.deepEqual(events.warnings, [
-    "Doctor mode ignores install-only CLI options: --preset, --skip-boost-install, --continue-on-health-check-failure, --start-server.",
+    "Doctor mode ignores install-only CLI options: --preset, --skip-boost-install, --start-server, --continue-on-health-check-failure.",
     "Doctor mode ignores install-only config keys: projectPath, optionalPackageIds, admin, update.",
   ]);
 });
@@ -140,6 +140,75 @@ test("runDoctorFlow repairs a missing storage link interactively", async () => {
   assert.ok(events.details.some((message) => /Repairs applied:\s+1$/.test(message)));
 });
 
+test("runDoctorFlow can restore .env from .env.example and reports the remaining APP_KEY issue", async () => {
+  const { events, harness } = createDoctorHarness();
+  const projectPath = createProjectFixture();
+  const envPath = path.join(projectPath, ".env");
+  const envExamplePath = path.join(projectPath, ".env.example");
+  const prompts = [];
+
+  fs.unlinkSync(envPath);
+  fs.writeFileSync(envExamplePath, "APP_NAME=Doctor Demo\nAPP_KEY=\n", "utf8");
+
+  harness.setAskYesNo(async (question, defaultYes) => {
+    prompts.push({ question, defaultYes });
+    return true;
+  });
+  harness.setRunCommand(async () => ({ exitCode: 0, success: true }));
+
+  const success = await harness.runDoctorFlow(projectPath, harness.state.runtime);
+
+  assert.equal(success, false);
+  assert.deepEqual(prompts, [{ question: "Restore .env from .env.example now?", defaultYes: true }]);
+  assert.equal(fs.existsSync(envPath), true);
+  assert.equal(fs.readFileSync(envPath, "utf8"), "APP_NAME=Doctor Demo\nAPP_KEY=\n");
+  assert.ok(events.oks.includes(".env restored from .env.example"));
+  assert.ok(events.details.some((message) => /Repairs applied:\s+1$/.test(message)));
+  assert.ok(events.failures.includes("Doctor found unresolved issues: APP_KEY"));
+});
+
+test("runDoctorFlow repairs failing artisan health checks by clearing and rebuilding caches", async () => {
+  const { events, harness } = createDoctorHarness();
+  const projectPath = createProjectFixture();
+  const prompts = [];
+  let cachesRebuilt = false;
+
+  harness.setAskYesNo(async (question, defaultYes) => {
+    prompts.push({ question, defaultYes });
+    return true;
+  });
+  harness.setRunCommand(async (command, args) => {
+    if (command === "php" && args[0] === "artisan") {
+      const artisanCommand = args[1];
+
+      if (artisanCommand === "optimize:clear" || artisanCommand === "optimize") {
+        if (artisanCommand === "optimize") {
+          cachesRebuilt = true;
+        }
+
+        return { exitCode: 0, success: true };
+      }
+
+      if (
+        ["about", "migrate:status", "route:list"].includes(artisanCommand) &&
+        !cachesRebuilt
+      ) {
+        return { exitCode: 1, success: false };
+      }
+    }
+
+    return { exitCode: 0, success: true };
+  });
+
+  const success = await harness.runDoctorFlow(projectPath, harness.state.runtime);
+
+  assert.equal(success, true);
+  assert.deepEqual(prompts, [{ question: "Clear and rebuild Laravel caches now?", defaultYes: true }]);
+  assert.ok(events.oks.includes("Laravel caches cleared and rebuilt successfully"));
+  assert.ok(events.oks.includes("Doctor found no remaining issues."));
+  assert.ok(events.details.some((message) => /Repairs applied:\s+1$/.test(message)));
+});
+
 test("runDoctorFlow stays report-only in dry-run mode and returns false when issues remain", async () => {
   const { events, harness } = createDoctorHarness({ printPlan: true });
   const projectPath = createProjectFixture();
@@ -165,6 +234,28 @@ test("runDoctorFlow stays report-only in dry-run mode and returns false when iss
   assert.ok(events.failures.includes("Doctor found unresolved issues: Storage link"));
   assert.ok(events.details.some((message) => /Repair prompts:\s+disabled$/.test(message)));
   assert.ok(events.subsections.includes("Unresolved Issues"));
+});
+
+test("runDoctorFlow stays report-only when .env is missing in dry-run mode", async () => {
+  const { events, harness } = createDoctorHarness({ printPlan: true });
+  const projectPath = createProjectFixture();
+  const envPath = path.join(projectPath, ".env");
+  const envExamplePath = path.join(projectPath, ".env.example");
+
+  fs.unlinkSync(envPath);
+  fs.writeFileSync(envExamplePath, "APP_NAME=Doctor Demo\nAPP_KEY=\n", "utf8");
+
+  harness.setAskYesNo(async () => {
+    throw new Error("askYesNo should not be called in doctor dry-run mode");
+  });
+  harness.setRunCommand(async () => ({ exitCode: 0, success: true }));
+
+  const success = await harness.runDoctorFlow(projectPath, harness.state.runtime);
+
+  assert.equal(success, false);
+  assert.equal(fs.existsSync(envPath), false);
+  assert.ok(events.warnings.includes(".env file not found"));
+  assert.ok(events.failures.includes("Doctor found unresolved issues: .env"));
 });
 
 test("runDoctorFlow prints nwidart status only when the package is installed", async () => {
