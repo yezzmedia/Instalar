@@ -246,25 +246,26 @@ test("main prints the grouped manual dry-run review from config in non-interacti
   await harness.main();
 
   assert.deepEqual(sections, [
-    "Step 1/6 - Project Basics",
-    "Step 2/6 - Database",
-    "Step 3/6 - Laravel Starter",
-    "Step 4/6 - Packages",
-    "Step 5/6 - Admin and Git",
-    "Installation Plan",
+    "Manual Mode",
+    "Step 1/6 | Project Basics",
+    "Step 2/6 | Database",
+    "Step 3/6 | Laravel Starter",
+    "Step 4/6 | Packages",
+    "Step 5/6 | Admin and Git",
+    "Installation Review",
   ]);
   assert.deepEqual(subsections, [
-    "Project",
-    "Database",
-    "Starter",
-    "Packages",
+    "Run Profile",
+    "Database Profile",
+    "Starter Stack",
+    "Package Stack",
     "Normal Packages",
     "Dev Packages",
-    "Admin and Git",
-    "Runtime",
+    "Identity and Git",
+    "Run Controls",
   ]);
   assert.ok(details.some((message) => /Name:\s+CLI Review App$/.test(message)));
-  assert.ok(oks.includes("Plan preview only. No project files will be modified."));
+  assert.ok(oks.includes("Preview only. No project files will be modified."));
 });
 
 test("main runs an unattended update dry-run for the current Laravel project", async () => {
@@ -305,10 +306,10 @@ test("main runs an unattended update dry-run for the current Laravel project", a
     harness.process.cwd = originalCwd;
   }
 
-  assert.deepEqual(sections, ["Update Plan"]);
-  assert.deepEqual(subsections, ["Project", "Runtime", "Detected Packages"]);
+  assert.deepEqual(sections, ["Update Review"]);
+  assert.deepEqual(subsections, ["Project Snapshot", "Run Controls", "Detected Stack"]);
   assert.ok(details.some((message) => new RegExp(`Project:\\s+${projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(message)));
   assert.ok(details.some((message) => /Dry run:\s+yes$/.test(message)));
-  assert.ok(oks.includes("Plan preview only. No project files will be modified."));
+  assert.ok(oks.includes("Preview only. No project files will be modified."));
   assert.equal(fs.existsSync(path.join(projectPath, "public", "storage")), true);
 });

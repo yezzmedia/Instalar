@@ -102,7 +102,12 @@ test("runDoctorFlow succeeds when health and permission checks pass", async () =
   assert.equal(success, true);
   assert.deepEqual(events.failures, []);
   assert.ok(events.oks.includes("Doctor found no remaining issues."));
-  assert.ok(events.details.includes("Inspect the current Laravel project and only offer narrow, safe repairs."));
+  assert.ok(events.details.includes("Safe diagnostics for the current Laravel project."));
+  assert.ok(
+    events.details.includes(
+      "Doctor mode reports health and permission issues first, then offers only narrow interactive repairs.",
+    ),
+  );
   assert.ok(events.details.some((message) => message.endsWith(projectPath)));
   assert.ok(events.details.includes("- laravel/framework"));
   assert.ok(events.details.some((message) => /Repair prompts:\s+enabled for safe fixes$/.test(message)));
@@ -233,7 +238,7 @@ test("runDoctorFlow stays report-only in dry-run mode and returns false when iss
   assert.ok(events.warnings.includes("Storage link missing"));
   assert.ok(events.failures.includes("Doctor found unresolved issues: Storage link"));
   assert.ok(events.details.some((message) => /Repair prompts:\s+disabled$/.test(message)));
-  assert.ok(events.subsections.includes("Unresolved Issues"));
+  assert.ok(events.subsections.includes("Needs Attention"));
 });
 
 test("runDoctorFlow stays report-only when .env is missing in dry-run mode", async () => {

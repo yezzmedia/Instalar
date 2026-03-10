@@ -128,20 +128,20 @@ test("printInstallPlan reports preset, boost behavior, and preview-only mode", (
     },
   );
 
-  assert.deepEqual(events.sections, ["Installation Plan"]);
+  assert.deepEqual(events.sections, ["Installation Review"]);
   assert.deepEqual(events.subsections, [
-    "Project",
-    "Database",
-    "Starter",
-    "Packages",
+    "Run Profile",
+    "Database Profile",
+    "Starter Stack",
+    "Package Stack",
     "Normal Packages",
     "Dev Packages",
-    "Admin and Git",
-    "Runtime",
+    "Identity and Git",
+    "Run Controls",
   ]);
   assert.ok(
     events.details.includes(
-      "Review the grouped summary before the installer creates or replaces files.",
+      "Nothing is created or replaced until this run is approved.",
     ),
   );
   assert.ok(events.details.some((message) => /Mode:\s+manual$/.test(message)));
@@ -159,7 +159,7 @@ test("printInstallPlan reports preset, boost behavior, and preview-only mode", (
   assert.ok(events.details.some((message) => /Configured secrets:\s+yes$/.test(message)));
   assert.ok(events.details.some((message) => /Health-check failures:\s+continue$/.test(message)));
   assert.equal(events.details.join("\n").includes("super-secret"), false);
-  assert.ok(events.oks.includes("Plan preview only. No project files will be modified."));
+  assert.ok(events.oks.includes("Preview only. No project files will be modified."));
   assert.equal(packageSet.has("laravel/boost"), true);
   assert.equal(packageSet.has("laravel/fortify"), true);
   assert.equal(packageSet.has("laravel/pulse"), true);
@@ -203,9 +203,9 @@ test("printFinalNotes groups project details, next steps, admin details, and war
     startServer: false,
   });
 
-  assert.deepEqual(events.sections, ["Completed"]);
-  assert.deepEqual(events.subsections, ["Project", "Next Steps", "Filament Admin", "Warnings"]);
-  assert.ok(events.oks.includes("INSTALAR completed successfully."));
+  assert.deepEqual(events.sections, ["Run Complete"]);
+  assert.deepEqual(events.subsections, ["Project Ready", "Run Next", "Admin Access", "Open Warnings"]);
+  assert.ok(events.oks.includes("INSTALAR finished successfully."));
   assert.ok(events.details.some((message) => /Project path:\s+\/tmp\/demo-app$/.test(message)));
   assert.ok(
     events.details.some((message) => /Log file:\s+\/tmp\/demo-instalar\.log$/.test(message)),

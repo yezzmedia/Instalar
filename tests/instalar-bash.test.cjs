@@ -21,6 +21,32 @@ printf 'debug=%s\\n' "$BASH_DEBUG"
   assert.match(result.stdout, /debug=1/);
 });
 
+test("print_brand_header renders the large INSTALAR logo on wide terminals", () => {
+  const result = runBashHarness("print_brand_header\n", {
+    env: {
+      COLUMNS: "120",
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /┌─+┐/);
+  assert.match(result.stdout, /██╗ ███╗   ██╗/);
+  assert.match(result.stdout, /Laravel setup toolkit/);
+});
+
+test("print_brand_header falls back to the compact title on narrow terminals", () => {
+  const result = runBashHarness("print_brand_header\n", {
+    env: {
+      COLUMNS: "60",
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /INSTALAR v[0-9]+\.[0-9]+\.[0-9]+ \([^)]+\)/);
+  assert.match(result.stdout, /Laravel setup toolkit/);
+  assert.doesNotMatch(result.stdout, /██╗ ███╗   ██╗/);
+});
+
 test("ask_yes_no keeps English-only answers and falls back to the default on empty input", () => {
   const result = runBashHarness(`
 BASH_HAS_TTY=0
