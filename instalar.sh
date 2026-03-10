@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.14"
+SCRIPT_VERSION="0.1.15"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -52,6 +52,7 @@ if [[ -t 1 ]]; then
   RED=$'\033[31m'     # Red (errors)
   GREEN=$'\033[32m'   # Green (success)
   YELLOW=$'\033[33m'  # Yellow (warnings)
+  LIGHT_BLUE=$'\033[38;5;117m' # Light blue brand accent
   CYAN=$'\033[36m'    # Cyan (info)
   WHITE=$'\033[37m'   # White
 else
@@ -61,6 +62,7 @@ else
   RED=""
   GREEN=""
   YELLOW=""
+  LIGHT_BLUE=""
   CYAN=""
   WHITE=""
 fi
@@ -133,19 +135,96 @@ fail() {
 # Args:
 #   $1 - Section title
 section() {
-  local line
-  line="$(printf '%*s' 72 '' | tr ' ' '-')"
-  printf '\n%b\n' "$(paint "${DIM}" "${line}")"
-  printf '%b\n' "$(paint "${BOLD}${WHITE}" "$1")"
-  printf '%b\n' "$(paint "${DIM}" "${line}")"
+  local title line_width line
+  title="${1^^}"
+  line_width=$(( 72 - ${#title} - 4 ))
+  if (( line_width < 12 )); then
+    line_width=12
+  fi
+  line="$(printf '%*s' "${line_width}" '' | tr ' ' '=')"
+  printf '\n%b\n' "$(paint "${BOLD}${WHITE}" "== ${title} ${line}")"
 }
 
-# Prints the INSTALAR ASCII art banner
+# The framed large logo needs at least 80 columns to render without wrapping.
+INSTALAR_LOGO_MIN_WIDTH=80
+INSTALAR_LOGO_CONTENT_WIDTH=71
+INSTALAR_LOGO_FRAME_WIDTH=73
+declare -a INSTALAR_LOGO_LINES=(
+  "  ██╗ ███╗   ██╗ ███████╗ ████████╗  █████╗  ██╗       █████╗  ██████╗ "
+  "  ██║ ████╗  ██║ ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██║      ██╔══██╗ ██╔══██╗"
+  "  ██║ ██╔██╗ ██║ ███████╗    ██║    ███████║ ██║      ███████║ ██████╔╝"
+  "  ██║ ██║╚██╗██║ ╚════██║    ██║    ██╔══██║ ██║      ██╔══██║ ██╔══██╗"
+  "  ██║ ██║ ╚████║ ███████║    ██║    ██║  ██║ ███████╗ ██║  ██║ ██║  ██║"
+  "  ╚═╝ ╚═╝  ╚═══╝ ╚══════╝    ╚═╝    ╚═╝  ╚═╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝"
+)
+
+# Returns the current terminal width when it can be detected reliably.
+get_terminal_width() {
+  if [[ "${COLUMNS:-}" =~ ^[0-9]+$ ]] && (( COLUMNS > 0 )); then
+    printf '%s\n' "${COLUMNS}"
+    return 0
+  fi
+
+  if command -v tput >/dev/null 2>&1; then
+    local width=""
+    width="$(tput cols 2>/dev/null || true)"
+    if [[ "${width}" =~ ^[0-9]+$ ]] && (( width > 0 )); then
+      printf '%s\n' "${width}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Prints the compact brand header used when the terminal is too narrow for the large logo.
+print_compact_brand_header() {
+  printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})")"
+  printf '%b\n' "$(paint "${LIGHT_BLUE}" "Laravel setup toolkit")"
+}
+
+# Prints a single framed header row with consistent inner padding.
+print_brand_frame_line() {
+  printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "$(printf '│ %-*s │' "${INSTALAR_LOGO_CONTENT_WIDTH}" "$1")")"
+}
+
+# Prints the approved large INSTALAR logo for wide terminals.
+print_large_brand_header() {
+  local logo_line horizontal_border
+  horizontal_border="$(printf '%*s' "${INSTALAR_LOGO_FRAME_WIDTH}" '')"
+  horizontal_border="${horizontal_border// /─}"
+
+  printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "┌${horizontal_border}┐")"
+  for logo_line in "${INSTALAR_LOGO_LINES[@]}"; do
+    printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "│ ${logo_line} │")"
+  done
+
+  printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "$(printf '│ %*s │' "${INSTALAR_LOGO_CONTENT_WIDTH}" '')")"
+  print_brand_frame_line "                Laravel setup toolkit"
+  printf '%b\n' "$(paint "${DIM}${LIGHT_BLUE}" "$(printf '│ %-*s │' "${INSTALAR_LOGO_CONTENT_WIDTH}" "                v${SCRIPT_VERSION} (${SCRIPT_CODENAME})")")"
+  printf '%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "└${horizontal_border}┘")"
+}
+
+# Prints the best-fitting brand header for the current terminal width.
+print_brand_header() {
+  local width=""
+
+  if width="$(get_terminal_width)"; then
+    if (( width < INSTALAR_LOGO_MIN_WIDTH )); then
+      print_compact_brand_header
+      return 0
+    fi
+  fi
+
+  print_large_brand_header
+}
+
+# Prints the INSTALAR startup banner.
 banner() {
   clear 2>/dev/null || true
-  printf '%b\n' "$(paint "${BOLD}${WHITE}" "INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})")"
-  printf '%b\n' "$(paint "${DIM}" "Laravel setup, update, and diagnostics")"
-  printf '%b\n' "$(paint "${DIM}" "Dependency checks run first. The guided installer continues afterwards.")"
+  print_brand_header
+  printf '%b\n' "$(paint "${DIM}" "Modern terminal setup, update, and diagnostics for Laravel + Filament")"
+  printf '%b\n' "$(paint "${DIM}" "Choose a mode, review the plan, then let INSTALAR handle the heavy lifting.")"
 }
 
 # =============================================================================
@@ -154,13 +233,21 @@ banner() {
 
 # Prints the command-line help text
 print_usage() {
+  print_brand_header
   cat <<EOF
-INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})
+Modern terminal setup, update, and diagnostics for Laravel + Filament.
+Pick the mode that matches the job, review the plan, then run with confidence.
 
 Usage:
   ./instalar.sh
   ./instalar.sh --help
   ./instalar.sh --non-interactive --config instalar.json
+
+Start here:
+  manual                  Recommended for first runs and custom stacks
+  auto                    Fastest path to a ready project
+  update                  Refresh the current Laravel project
+  doctor                  Inspect the current Laravel project safely
 
 Modes:
   auto                    Create a new Laravel + Filament project with opinionated defaults
@@ -168,7 +255,7 @@ Modes:
   update                  Update the Laravel project in the current directory
   doctor                  Diagnose the Laravel project in the current directory
 
-Common options:
+Run controls:
   --mode <auto|manual|update|doctor>
   --config <file>         Path to JSON configuration (Node phase)
   --dry-run               Resolve input, print the plan, and exit without modifying files
@@ -1509,17 +1596,17 @@ function debug(message) {
 
 // Prints a visual section heading.
 function section(title) {
-  const line = "-".repeat(Math.max(24, Math.min(56, String(title).length + 8)));
+  const label = String(title).toUpperCase();
+  const line = "=".repeat(Math.max(12, 64 - label.length - 4));
   console.log("");
-  console.log(color(title, C.bold + C.white));
-  console.log(color(line, C.dim));
-  appendToRuntimeLog(`\n${title}\n${line}\n`);
+  console.log(color(`== ${label} ${line}`, C.bold + C.white));
+  appendToRuntimeLog(`\n${title}\n`);
 }
 
 // Prints a compact subsection heading used inside plans and summaries.
 function subsection(title) {
   console.log("");
-  console.log(`  ${color(title, C.bold + C.cyan)}`);
+  console.log(`  ${color(`[${title}]`, C.bold + C.cyan)}`);
   appendToRuntimeLog(`\n  ${title}\n`);
 }
 
@@ -1682,9 +1769,24 @@ function printFailureSummary(summary) {
   }
 }
 
+function getModeDefinition(modeId) {
+  return INSTALLER_MODE_DEFINITIONS.find((mode) => mode.id === modeId) || null;
+}
+
+function printModeIntro(modeId) {
+  const definition = getModeDefinition(modeId);
+  if (!definition) {
+    return;
+  }
+
+  section(definition.heading);
+  detail(definition.introLead);
+  detail(definition.introHint);
+}
+
 // Prints the current guided step in manual mode.
 function printStepCard(step, total, title, description = "") {
-  section(`Step ${step}/${total} - ${title}`);
+  section(`Step ${step}/${total} | ${title}`);
   if (description) {
     detail(description);
   }
@@ -1694,18 +1796,34 @@ const INSTALLER_MODE_DEFINITIONS = [
   {
     id: "auto",
     description: "Create a new Laravel + Filament project with opinionated defaults",
+    startHere: "Fastest path to a ready project",
+    heading: "Auto Mode",
+    introLead: "Fastest route to a ready Laravel + Filament project.",
+    introHint: "Choose a project name, confirm a preset, and review the run before files change.",
   },
   {
     id: "manual",
     description: "Guided step-by-step project setup",
+    startHere: "Recommended for first runs and custom stacks",
+    heading: "Manual Mode",
+    introLead: "Full-control setup with guided decisions at every stage.",
+    introHint: "Work through the steps, review the final run, and start only when everything looks right.",
   },
   {
     id: "update",
     description: "Update the Laravel project in the current directory",
+    startHere: "Refresh the current Laravel project",
+    heading: "Update Mode",
+    introLead: "Refresh the current project with a clear run summary before anything executes.",
+    introHint: "Dependency, migration, optimization, and frontend steps are all previewed first.",
   },
   {
     id: "doctor",
     description: "Diagnose the Laravel project in the current directory",
+    startHere: "Inspect the current Laravel project safely",
+    heading: "Doctor Mode",
+    introLead: "Safe diagnostics for the current Laravel project.",
+    introHint: "Doctor mode reports health and permission issues first, then offers only narrow interactive repairs.",
   },
 ];
 
@@ -1960,7 +2078,7 @@ const CONFIG_FIELD_DEFINITIONS = {
 
 const MODE_OVERRIDE_SECTION_KEYS = ["auto", "manual", "update"];
 const HELP_GROUP_TITLES = {
-  common: "Common options",
+  common: "Run controls",
   automation: "Automation",
   safety: "Safety",
 };
@@ -3416,8 +3534,7 @@ function cleanupDuplicateTwoFactorMigrations(projectDir) {
 // =============================================================================
 // Collects auto-mode installation config from prompts and presets.
 async function collectAutoConfig(preset = {}) {
-  section("Automatic Setup");
-  detail("Resolve a project name, apply a preset, and use opinionated defaults.");
+  printModeIntro("auto");
 
   const appNameDefault = preset.projectName || preset.appName || "Laravel Filament App";
   const appName = await askRequired("Project name", appNameDefault);
@@ -3488,6 +3605,7 @@ async function collectAutoConfig(preset = {}) {
 // Collects manual-mode installation config with full interactive choices.
 async function collectManualConfig(preset = {}) {
   const totalSteps = 6;
+  printModeIntro("manual");
 
   printStepCard(1, totalSteps, "Project Basics", "Name the app and choose where it should be created.");
   const appNameDefault = preset.projectName || preset.appName || "Laravel Filament App";
@@ -3782,34 +3900,34 @@ function printInstallPlan(config, runtimeOptions = state.runtime) {
   const preset = getPackagePresetById(config.presetId || runtimeOptions.preset);
   const pathClassification = classifyExistingPath(config.projectPath);
 
-  section("Installation Plan");
-  detail("Review the grouped summary before the installer creates or replaces files.");
-  printReviewSection("Project", [
+  section("Installation Review");
+  detail("Nothing is created or replaced until this run is approved.");
+  printReviewSection("Run Profile", [
     ["Mode", config.mode],
     ["Name", config.appName],
     ["Path", config.projectPath],
     ["Path type", describePathClassification(pathClassification)],
     ["Path strategy", describeExistingPathStrategy(config.projectPath, runtimeOptions)],
   ]);
-  printReviewSection("Database", buildDatabasePlanEntries(config.database));
-  printReviewSection("Starter", [
+  printReviewSection("Database Profile", buildDatabasePlanEntries(config.database));
+  printReviewSection("Starter Stack", [
     ["Laravel flags", formatList(config.laravelNewFlags)],
     ["Boost install", runtimeOptions.skipBoostInstall ? "skip" : "run interactively"],
   ]);
-  printReviewSection("Packages", [
+  printReviewSection("Package Stack", [
     ["Preset", preset.title],
     ["Normal packages", `${config.normalPackages.length} selected`],
     ["Dev packages", `${config.devPackages.length} selected`],
   ]);
   printBulletSection("Normal Packages", config.normalPackages, "No extra normal packages.");
   printBulletSection("Dev Packages", config.devPackages, "No dev packages.");
-  printReviewSection("Admin and Git", [
+  printReviewSection("Identity and Git", [
     ["Create admin", config.createAdmin ? "yes" : "no"],
     ["Admin password", describeAdminPasswordStrategy(config)],
     ["Configured secrets", configUsesSensitiveValues(config) ? "yes" : "no"],
     ["Git init", config.gitInit ? "yes" : "no"],
   ]);
-  printReviewSection("Runtime", [
+  printReviewSection("Run Controls", [
     ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
     ["Log file", runtimeOptions.logFile || "-"],
     [
@@ -3819,22 +3937,22 @@ function printInstallPlan(config, runtimeOptions = state.runtime) {
   ]);
 
   if (runtimeOptions.printPlan) {
-    ok("Plan preview only. No project files will be modified.");
+    ok("Preview only. No project files will be modified.");
   } else if (runtimeOptions.nonInteractive) {
-    info("[non-interactive] Installation will start automatically.");
+    info("[non-interactive] Installation will start automatically after this review.");
   }
 
   return packageSet;
 }
 
 function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
-  section("Update Plan");
-  detail("Update the current Laravel project with a preview of the detected package stack.");
-  printReviewSection("Project", [
+  section("Update Review");
+  detail("Inspect the current project state before dependencies, migrations, and builds run.");
+  printReviewSection("Project Snapshot", [
     ["Project", projectDir],
     ["Path type", describePathClassification(classifyExistingPath(projectDir))],
   ]);
-  printReviewSection("Runtime", [
+  printReviewSection("Run Controls", [
     ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
     ["Log file", runtimeOptions.logFile || "-"],
     ["Boost install", runtimeOptions.skipBoostInstall ? "skip" : "run interactively"],
@@ -3843,12 +3961,12 @@ function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
       runtimeOptions.continueOnHealthCheckFailure ? "continue" : "abort",
     ],
   ]);
-  printBulletSection("Detected Packages", [...packages].sort(), "No Composer packages detected.");
+  printBulletSection("Detected Stack", [...packages].sort(), "No Composer packages detected.");
 
   if (runtimeOptions.printPlan) {
-    ok("Plan preview only. No project files will be modified.");
+    ok("Preview only. No project files will be modified.");
   } else if (runtimeOptions.nonInteractive) {
-    info("[non-interactive] Update will start automatically.");
+    info("[non-interactive] Update will start automatically after this review.");
   }
 }
 
@@ -4581,13 +4699,13 @@ async function reviewManualConfig(config, runtimeOptions = state.runtime) {
       totalSteps,
       totalSteps,
       "Review",
-      "Confirm the final plan, go back to the prompts, or cancel the run.",
+      "Final checkpoint before INSTALAR creates, replaces, or updates anything.",
     );
     printInstallPlan(config, runtimeOptions);
 
     const action = await askChoice(
       "Review action",
-      ["Start installation", "Review answers again", "Cancel"],
+      ["Start installation", "Revise answers", "Cancel run"],
       0,
     );
 
@@ -4824,9 +4942,9 @@ async function runUpdateFlow(projectDir) {
 // =============================================================================
 // Prints final success output including admin credentials and accumulated warnings.
 function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
-  section("Completed");
-  ok("INSTALAR completed successfully.");
-  printReviewSection("Project", [
+  section("Run Complete");
+  ok("INSTALAR finished successfully.");
+  printReviewSection("Project Ready", [
     ["Project path", projectPath],
     ["Log file", runtimeOptions.logFile || "-"],
   ]);
@@ -4838,7 +4956,7 @@ function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
   if (state.boostInstallSkipped) {
     nextSteps.push("php artisan boost:install");
   }
-  printBulletSection("Next Steps", nextSteps);
+  printBulletSection("Run Next", nextSteps);
 
   if (state.createdAdmin) {
     const adminEntries = [
@@ -4854,11 +4972,11 @@ function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
       adminEntries.push(["Note", "Rotate the default password immediately."]);
     }
 
-    printReviewSection("Filament Admin", adminEntries);
+    printReviewSection("Admin Access", adminEntries);
   }
 
   if (state.warnings.length > 0) {
-    printBulletSection("Warnings", state.warnings);
+    printBulletSection("Open Warnings", state.warnings);
   }
 }
 
@@ -5499,16 +5617,13 @@ function collectDoctorSuggestions(healthReport, permissionReport) {
 }
 
 function printDoctorSummary(projectPath, healthReport, permissionReport) {
-  section("Doctor Summary");
-  printReviewSection("Project", [["Project", projectPath]]);
-  printReviewSection("Checks", [
+  section("Doctor Report");
+  printReviewSection("Diagnosis", [
+    ["Project", projectPath],
     ["Health checks", `${healthReport.passedCount}/${healthReport.totalCount} passed`],
     ["Permission checks", `${permissionReport.passedCount}/${permissionReport.totalCount} passed`],
+    ["Repairs applied", healthReport.repairedCount > 0 ? String(healthReport.repairedCount) : "0"],
   ]);
-
-  if (healthReport.repairedCount > 0) {
-    printReviewSection("Repairs", [["Repairs applied", String(healthReport.repairedCount)]]);
-  }
 
   const unresolvedIssues = [...new Set([
     ...healthReport.failedChecks,
@@ -5521,11 +5636,11 @@ function printDoctorSummary(projectPath, healthReport, permissionReport) {
   }
 
   fail(`Doctor found unresolved issues: ${unresolvedIssues.join(", ")}`);
-  printBulletSection("Unresolved Issues", unresolvedIssues);
+  printBulletSection("Needs Attention", unresolvedIssues);
 
   const suggestions = collectDoctorSuggestions(healthReport, permissionReport);
   if (suggestions.length > 0) {
-    printBulletSection("Suggested Next Steps", suggestions);
+    printBulletSection("Recommended Fixes", suggestions);
   }
 
   return false;
@@ -5567,13 +5682,12 @@ async function runDoctorFlow(projectPath, runtimeOptions = state.runtime) {
 
   const packages = readComposerPackages(projectPath);
 
-  section("Doctor Mode");
-  detail("Inspect the current Laravel project and only offer narrow, safe repairs.");
-  printReviewSection("Project", [
+  printModeIntro("doctor");
+  printReviewSection("Project Snapshot", [
     ["Project", projectPath],
     ["Path type", describePathClassification(classifyExistingPath(projectPath))],
   ]);
-  printReviewSection("Runtime", [
+  printReviewSection("Run Controls", [
     ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
     ["Log file", runtimeOptions.logFile || "-"],
     [
@@ -5583,7 +5697,7 @@ async function runDoctorFlow(projectPath, runtimeOptions = state.runtime) {
         : "enabled for safe fixes",
     ],
   ]);
-  printBulletSection("Detected Packages", [...packages].sort(), "No Composer packages detected.");
+  printBulletSection("Detected Stack", [...packages].sort(), "No Composer packages detected.");
 
   const healthReport = await runHealthCheckSuite(projectPath, runtimeOptions, {
     sectionTitle: "Health Check",
@@ -5609,17 +5723,24 @@ async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
 }
 
 function formatNodeUsageLine(label, description = "") {
-  return description ? `  ${label.padEnd(24)} ${description}` : `  ${label}`;
+  return description ? `  ${label.padEnd(26)} ${description}` : `  ${label}`;
 }
 
 // Prints Node-phase usage help.
 function printNodeUsage() {
   console.log(`INSTALAR v${SCRIPT_VERSION} (${SCRIPT_CODENAME})`);
+  console.log("Modern terminal setup, update, and diagnostics for Laravel + Filament.");
+  console.log("Pick the mode that matches the job, review the plan, then run with confidence.");
   console.log("");
   console.log("Usage:");
   console.log("  ./instalar.sh");
   console.log("  ./instalar.sh --help");
   console.log("  ./instalar.sh --non-interactive --config instalar.json");
+  console.log("");
+  console.log("Start here:");
+  INSTALLER_MODE_DEFINITIONS.forEach((mode) => {
+    console.log(formatNodeUsageLine(mode.id, mode.startHere));
+  });
   console.log("");
   console.log("Modes:");
   INSTALLER_MODE_DEFINITIONS.forEach((mode) => {
@@ -5850,7 +5971,7 @@ async function main() {
 
 // Global top-level error handler for the Node phase.
 main().catch((error) => {
-  section("Error");
+  section("Run Stopped");
   fail(error.message || String(error));
   if (error.failureSummary) {
     printFailureSummary(error.failureSummary);
