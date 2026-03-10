@@ -226,11 +226,11 @@ test("printUpdatePlan reports runtime details without mutating project state", (
     },
   );
 
-  assert.deepEqual(events.sections, ["Update Plan"]);
-  assert.deepEqual(events.subsections, ["Project", "Runtime", "Detected Packages"]);
+  assert.deepEqual(events.sections, ["Update Review"]);
+  assert.deepEqual(events.subsections, ["Project Snapshot", "Run Controls", "Detected Stack"]);
   assert.ok(
     events.details.includes(
-      "Update the current Laravel project with a preview of the detected package stack.",
+      "Inspect the current project state before dependencies, migrations, and builds run.",
     ),
   );
   assert.ok(events.details.some((message) => /Project:\s+\/tmp\/demo-project$/.test(message)));
@@ -240,7 +240,7 @@ test("printUpdatePlan reports runtime details without mutating project state", (
   assert.ok(events.details.some((message) => /Health-check failures:\s+abort$/.test(message)));
   assert.ok(events.details.includes("- filament/filament"));
   assert.ok(events.details.includes("- laravel/pulse"));
-  assert.ok(events.oks.includes("Plan preview only. No project files will be modified."));
+  assert.ok(events.oks.includes("Preview only. No project files will be modified."));
 });
 
 test("failure summary helpers describe recovery steps for command and permission issues", () => {

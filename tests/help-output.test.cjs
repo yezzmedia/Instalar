@@ -9,13 +9,23 @@ test("help output documents the current installer flags and version", () => {
   const installer = readInstallerMetadata();
   const result = spawnSync("bash", [installerPath, "--help"], {
     encoding: "utf8",
+    env: {
+      ...process.env,
+      COLUMNS: "120",
+    },
   });
   const output = result.stdout ?? "";
 
   assert.equal(result.status, 0);
-  assert.match(output, new RegExp(`INSTALAR v${installer.version.replaceAll(".", "\\.")}`));
+  assert.match(output, /┌─+┐/);
+  assert.match(output, /██╗ ███╗   ██╗/);
+  assert.match(output, /Laravel setup toolkit/);
+  assert.match(output, new RegExp(`v${installer.version.replaceAll(".", "\\.")} \\(${installer.codename}\\)`));
+  assert.match(output, /Modern terminal setup, update, and diagnostics for Laravel \+ Filament/);
+  assert.match(output, /Pick the mode that matches the job, review the plan, then run with confidence/);
+  assert.match(output, /Start here:/);
   assert.match(output, /Modes:/);
-  assert.match(output, /Common options:/);
+  assert.match(output, /Run controls:/);
   assert.match(output, /Automation:/);
   assert.match(output, /Safety:/);
   assert.match(output, /Examples:/);
@@ -27,6 +37,7 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /--allow-delete-any-existing/);
   assert.match(output, /--continue-on-health-check-failure/);
   assert.match(output, /--mode <auto\|manual\|update\|doctor>/);
+  assert.match(output, /Recommended for first runs and custom stacks/);
   assert.match(output, /Guided step-by-step project setup/);
   assert.match(output, /Diagnose the Laravel project in the current directory/);
   assert.match(output, /Resolve input, print the plan, and exit without modifying files/);

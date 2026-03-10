@@ -86,10 +86,11 @@ test("collectAutoConfig resolves presets, database defaults, and generated admin
   assert.equal(config.admin.passwordSource, "generated");
   assert.equal(config.admin.revealPassword, true);
   assert.ok(config.admin.password.length >= 20);
-  assert.deepEqual(sections, ["Automatic Setup"]);
+  assert.deepEqual(sections, ["Auto Mode"]);
+  assert.ok(details.includes("Fastest route to a ready Laravel + Filament project."));
   assert.ok(
     details.includes(
-      "Resolve a project name, apply a preset, and use opinionated defaults.",
+      "Choose a project name, confirm a preset, and review the run before files change.",
     ),
   );
   assert.ok(config.normalPackages.includes("filament/filament:^5.0"));
@@ -218,11 +219,12 @@ test("collectManualConfig combines prompt answers, preset packages, and configur
   assert.equal(config.admin.revealPassword, false);
   assert.equal(config.gitInit, true);
   assert.deepEqual(sections, [
-    "Step 1/6 - Project Basics",
-    "Step 2/6 - Database",
-    "Step 3/6 - Laravel Starter",
-    "Step 4/6 - Packages",
-    "Step 5/6 - Admin and Git",
+    "Manual Mode",
+    "Step 1/6 | Project Basics",
+    "Step 2/6 | Database",
+    "Step 3/6 | Laravel Starter",
+    "Step 4/6 | Packages",
+    "Step 5/6 | Admin and Git",
   ]);
 });
 
@@ -272,6 +274,6 @@ test("reviewManualConfig offers start, retry, or cancel after the grouped review
   });
 
   assert.equal(action, "retry");
-  assert.deepEqual(sections, ["Step 6/6 - Review", "Installation Plan"]);
+  assert.deepEqual(sections, ["Step 6/6 | Review", "Installation Review"]);
   assert.deepEqual(askedQuestions, ["Review action"]);
 });

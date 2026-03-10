@@ -2,20 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.14] - 2026-03-10 (Rosie)
+## [0.1.15] - 2026-03-10 (Rosie)
 
 ### Added
 
-- Direct Bash-phase regression coverage for flag parsing, yes/no prompts, dry-run dependency inspection, missing-dependency decisions, and dependency-update control flow
-- Doctor-mode repair support for restoring `.env` from `.env.example`
-- Doctor-mode repair support for clearing and rebuilding Laravel caches when the Artisan health checks fail
-- A deterministic unattended `update --dry-run` smoke test that exercises the main dispatcher without networked installs
+- A bolder modern-terminal presentation across install, update, doctor, completion, and error output
+- A mode-aware onboarding intro for guided runs
+- Mermaid diagrams and a redesigned landing-plus-reference README structure
 
 ### Changed
 
-- Count applied doctor repairs even when the repair only resolves part of the overall report
-- Expanded Doctor-mode regression coverage for the new `.env` and cache-repair flows
-- Command failures now print concise recovery summaries for Composer, npm, and Artisan steps, and the final permission phase prints the same style of next-step guidance when checks fail
+- Renamed review and summary sections to feel more guided and easier to scan
+- Refreshed `--help` and top-level banner copy around a stronger "start here / run controls" structure
+- Reworked Manual mode so the flow opens with a clearer onboarding section before the step cards
+- Expanded output-focused regression coverage to lock in the new plan, review, and help layouts
 
 ## [0.1.13] - 2026-03-09 (Rosie)
 
