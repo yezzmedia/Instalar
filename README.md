@@ -10,7 +10,7 @@ Modern terminal setup, update, and diagnostics for Laravel 12 + Filament 5.
 
 Made with <3 by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*.
 
-Current version: **0.1.15** (Rosie)
+Current version: **0.1.16** (Rosie)
 
 > [!NOTE]
 > `instalar.sh` stays intentionally **single-file**:
@@ -399,7 +399,7 @@ v<version>-<codename>
 For this release:
 
 ```text
-v0.1.15-Rosie
+v0.1.16-Rosie
 ```
 
 ## Project Layout
