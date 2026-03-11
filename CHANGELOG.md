@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.16] - 2026-03-11 (Rosie)
+
+### Fixed
+
+- Corrected the interactive multi-select redraw logic so the Manual-mode package picker no longer shifts the screen on arrow-key navigation
+- Made the multi-select renderer account for wrapped terminal rows, which restores reliable up/down navigation for longer package labels
+
 ## [0.1.15] - 2026-03-10 (Rosie)
 
 ### Added
