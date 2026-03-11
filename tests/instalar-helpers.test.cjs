@@ -50,6 +50,37 @@ test("package and Laravel flag helpers normalize installer input consistently", 
   );
 });
 
+test("terminal row helpers account for ANSI escapes and wrapped prompt rows", () => {
+  const harness = loadInstallerHarness();
+
+  assert.equal(
+    harness.terminalStringWidth("\u001b[36m›\u001b[0m \u001b[32m[x]\u001b[0m Package"),
+    13,
+  );
+  assert.equal(
+    harness.countRenderedTerminalRows(
+      [
+        "Optional packages",
+        "  › [x] Telescope [Monitoring] - Debug requests, jobs, and exceptions.",
+        "  Controls: ↑/↓ move, Space toggle, Enter confirm",
+      ],
+      32,
+    ),
+    6,
+  );
+  assert.equal(
+    harness.countRenderedCursorRows(
+      [
+        "Optional packages",
+        "  › [x] Telescope [Monitoring] - Debug requests, jobs, and exceptions.",
+        "  Controls: ↑/↓ move, Space toggle, Enter confirm",
+      ],
+      32,
+    ),
+    5,
+  );
+});
+
 test("environment helpers escape values and configure sqlite and mysql projects", () => {
   const harness = loadInstallerHarness();
   const sqliteProject = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-sqlite-"));

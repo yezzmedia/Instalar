@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.15"
+SCRIPT_VERSION="0.1.16"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -1517,6 +1517,23 @@ function stripAnsi(value) {
   return String(value).replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
+function terminalStringWidth(value) {
+  return [...stripAnsi(value)].length;
+}
+
+function countRenderedTerminalRows(lines, columns = 80) {
+  const safeColumns = Number.isInteger(columns) && columns > 0 ? columns : 80;
+
+  return lines.reduce((total, line) => {
+    const width = terminalStringWidth(line);
+    return total + Math.max(1, Math.ceil(width / safeColumns));
+  }, 0);
+}
+
+function countRenderedCursorRows(lines, columns = 80) {
+  return Math.max(0, countRenderedTerminalRows(lines, columns) - 1);
+}
+
 function appendToRuntimeLog(text) {
   if (!state.runtime.logFile) {
     return;
@@ -2769,32 +2786,32 @@ async function askMultiChoiceInteractive(question, options, defaultIndexes = [])
 
   const selected = new Set(defaultIndexes);
   let cursor = 0;
-  let firstRender = true;
-  const rows = options.length + 5;
+  let renderedRows = 0;
 
   const render = () => {
-    if (!firstRender) {
-      process.stdout.write(`\x1b[${rows}A`);
+    const columns =
+      Number.isInteger(process.stdout.columns) && process.stdout.columns > 0
+        ? process.stdout.columns
+        : 80;
+    const lines = [
+      color(question, C.bold + C.white),
+      `  ${color("Selected:", C.dim)} ${selected.size}/${options.length}`,
+      ...options.map((option, index) => {
+        const pointer = index === cursor ? color("›", C.cyan) : " ";
+        const mark = selected.has(index) ? color("[x]", C.green) : "[ ]";
+        return `  ${pointer} ${mark} ${option}`;
+      }),
+      `  ${color("Controls:", C.dim)} ${color("↑/↓", C.cyan)} move, ${color("Space", C.cyan)} toggle, ${color("Enter", C.cyan)} confirm`,
+      "",
+    ];
+
+    if (renderedRows > 0) {
+      process.stdout.write(`\x1b[${renderedRows}A`);
     }
 
     process.stdout.write("\x1b[0J");
-    process.stdout.write(`${color(question, C.bold + C.white)}\n`);
-    process.stdout.write(
-      `  ${color("Selected:", C.dim)} ${selected.size}/${options.length}\n`,
-    );
-
-    options.forEach((option, index) => {
-      const pointer = index === cursor ? color("›", C.cyan) : " ";
-      const mark = selected.has(index) ? color("[x]", C.green) : "[ ]";
-      process.stdout.write(`  ${pointer} ${mark} ${option}\n`);
-    });
-
-    process.stdout.write(
-      `  ${color("Controls:", C.dim)} ${color("↑/↓", C.cyan)} move, ${color("Space", C.cyan)} toggle, ${color("Enter", C.cyan)} confirm\n`,
-    );
-    process.stdout.write("\n");
-
-    firstRender = false;
+    process.stdout.write(lines.join("\n"));
+    renderedRows = countRenderedCursorRows(lines, columns);
   };
 
   return new Promise((resolve, reject) => {
