@@ -59,6 +59,7 @@ globalThis.__instalarTest = {
   buildCommandFailureSummary,
   buildPermissionFailureSummary,
   printFailureSummary,
+  resolveUpdateDependencyStrategy,
   printStepCard,
   initializeRuntimeLog,
   stripAnsi,

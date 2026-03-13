@@ -145,6 +145,61 @@ test("ensureNwidartViteMainConfig rewrites a default vite config and preserves s
   assert.match(viteConfig, /host: '0\.0\.0\.0'/);
 });
 
+test("ensureNwidartViteMainConfig leaves customized configs untouched and warns instead", async () => {
+  const harness = loadInstallerHarness();
+  const projectPath = createNwidartProjectFixture();
+  const warnings = [];
+  const infos = [];
+
+  fs.writeFileSync(
+    path.join(projectPath, "vite.config.js"),
+    [
+      "import { defineConfig } from 'vite';",
+      "import laravel from 'laravel-vite-plugin';",
+      "",
+      "export default defineConfig({",
+      "    plugins: [",
+      "        laravel({",
+      "            input: ['resources/css/app.css', 'resources/js/app.js'],",
+      "            refresh: true,",
+      "        }),",
+      "    ],",
+      "    resolve: {",
+      "        alias: {",
+      "            '@': '/resources/js',",
+      "        },",
+      "    },",
+      "});",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  harness.setWarn((message) => {
+    warnings.push(message);
+  });
+  harness.setInfo((message) => {
+    infos.push(message);
+  });
+  harness.setOk(() => {});
+
+  const changed = await harness.ensureNwidartViteMainConfig(
+    projectPath,
+    new Set(["nwidart/laravel-modules"]),
+  );
+  const viteConfig = fs.readFileSync(path.join(projectPath, "vite.config.js"), "utf8");
+
+  assert.equal(changed, false);
+  assert.match(viteConfig, /alias:/);
+  assert.doesNotMatch(viteConfig, /collectModuleAssetsPaths/);
+  assert.deepEqual(warnings, [
+    "vite.config.js looks customized. Skipping automatic Nwidart Vite rewrite.",
+  ]);
+  assert.deepEqual(infos, [
+    "Please follow Nwidart docs to switch manually to collectModuleAssetsPaths.",
+  ]);
+});
+
 test("ensureNwidartModuleStatusesFile and ensureNwidartModulesDirectory create expected filesystem state", async () => {
   const harness = loadInstallerHarness();
   const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "instalar-module-statuses-"));

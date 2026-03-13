@@ -252,6 +252,7 @@ test("printUpdatePlan reports runtime details without mutating project state", (
     {
       printPlan: true,
       logFile: "/tmp/instalar.log",
+      upgradeDependencies: false,
       skipBoostInstall: false,
       continueOnHealthCheckFailure: false,
     },
@@ -267,11 +268,28 @@ test("printUpdatePlan reports runtime details without mutating project state", (
   assert.ok(events.details.some((message) => /Project:\s+\/tmp\/demo-project$/.test(message)));
   assert.ok(events.details.some((message) => /Dry run:\s+yes$/.test(message)));
   assert.ok(events.details.some((message) => /Log file:\s+\/tmp\/instalar\.log$/.test(message)));
+  assert.ok(
+    events.details.some((message) => /Composer dependencies:\s+install \(lockfile-safe\)$/.test(message)),
+  );
   assert.ok(events.details.some((message) => /Boost install:\s+run interactively$/.test(message)));
   assert.ok(events.details.some((message) => /Health-check failures:\s+abort$/.test(message)));
   assert.ok(events.details.includes("- filament/filament"));
   assert.ok(events.details.includes("- laravel/pulse"));
   assert.ok(events.oks.includes("Preview only. No project files will be modified."));
+});
+
+test("resolveUpdateDependencyStrategy defaults to lockfile-safe installs and supports explicit upgrades", () => {
+  const harness = loadInstallerHarness();
+  const defaultStrategy = harness.resolveUpdateDependencyStrategy({ upgradeDependencies: false });
+  const upgradeStrategy = harness.resolveUpdateDependencyStrategy({ upgradeDependencies: true });
+
+  assert.equal(defaultStrategy.label, "install (lockfile-safe)");
+  assert.equal(defaultStrategy.command, "composer");
+  assert.deepEqual([...defaultStrategy.args], ["install", "--no-interaction"]);
+
+  assert.equal(upgradeStrategy.label, "update (--upgrade-dependencies)");
+  assert.equal(upgradeStrategy.command, "composer");
+  assert.deepEqual([...upgradeStrategy.args], ["update", "--no-interaction"]);
 });
 
 test("failure summary helpers describe recovery steps for command and permission issues", () => {
