@@ -32,6 +32,8 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /--dry-run/);
   assert.match(output, /--print-plan/);
   assert.match(output, /--log-file <path>/);
+  assert.match(output, /--display-command-output/);
+  assert.match(output, /--display-info/);
   assert.match(output, /--preset <name>/);
   assert.match(output, /--upgrade-dependencies/);
   assert.match(output, /--skip-boost-install/);
@@ -44,6 +46,8 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /Resolve input, print the plan, and exit without modifying files/);
   assert.match(output, /Legacy alias for --dry-run/);
   assert.match(output, /Write installer output to a plain-text log file/);
+  assert.match(output, /Show command stdout\/stderr while installer steps run/);
+  assert.match(output, /Alias for --display-command-output/);
   assert.match(output, /Package preset: minimal, standard, or full/);
   assert.match(output, /Use composer update in update mode/);
   assert.match(output, /Skip interactive boost:install step/);

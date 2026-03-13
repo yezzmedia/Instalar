@@ -12,6 +12,7 @@ test("parseCliArgs accepts aliases, dry-run, and explicit assignment forms", () 
     "--preset=full",
     "--dry-run",
     "--log-file=logs/instalar.log",
+    "--display-command-output",
     "--skip-boost-install",
     "--allow-delete-any-existing",
     "--continue-on-health-check-failure",
@@ -24,6 +25,7 @@ test("parseCliArgs accepts aliases, dry-run, and explicit assignment forms", () 
   assert.equal(options.nonInteractive, true);
   assert.equal(options.printPlan, true);
   assert.equal(options.logFile, "logs/instalar.log");
+  assert.equal(options.displayCommandOutput, true);
   assert.equal(options.preset, "full");
   assert.equal(options.skipBoostInstall, true);
   assert.equal(options.allowDeleteAnyExisting, true);
@@ -51,6 +53,13 @@ test("parseCliArgs accepts separated preset values", () => {
 
   assert.equal(options.preset, "minimal");
   assert.equal(options.logFile, "instalar.log");
+});
+
+test("parseCliArgs accepts the display-info alias for command output", () => {
+  const harness = loadInstallerHarness();
+  const options = harness.parseCliArgs(["--display-info"]);
+
+  assert.equal(options.displayCommandOutput, true);
 });
 
 test("parseCliArgs resets invalid modes and emits a warning", () => {

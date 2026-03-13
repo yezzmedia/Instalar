@@ -292,6 +292,57 @@ test("resolveUpdateDependencyStrategy defaults to lockfile-safe installs and sup
   assert.deepEqual([...upgradeStrategy.args], ["update", "--no-interaction"]);
 });
 
+test("printStepCard adds a visible progress meter for guided manual runs", () => {
+  const harness = loadInstallerHarness();
+  const events = {
+    details: [],
+    sections: [],
+  };
+
+  harness.setSection((title) => {
+    events.sections.push(title);
+  });
+  harness.setDetail((message) => {
+    events.details.push(message);
+  });
+
+  assert.equal(harness.buildProgressMeter(2, 6, 12), "████░░░░░░░░");
+
+  harness.printStepCard(2, 6, "Database", "Choose the database connection.");
+
+  assert.deepEqual(events.sections, ["Step 2/6 | Database"]);
+  assert.ok(events.details.includes("Choose the database connection."));
+  assert.ok(events.details.includes("Progress: ██████░░░░░░░░░░░░ 2/6"));
+});
+
+test("activity helpers summarize commands and build a bouncing progress bar frame", () => {
+  const harness = loadInstallerHarness();
+
+  assert.equal(
+    harness.truncateTextMiddle("composer require filament/filament:^5.0 --no-interaction", 20),
+    "composer r…teraction",
+  );
+  assert.equal(
+    harness.summarizeCommandForActivity("php", ["artisan", "migrate", "--force", "--no-interaction"]),
+    "artisan migrate",
+  );
+  assert.equal(
+    harness.summarizeCommandForActivity("npm", ["run", "build"]),
+    "npm run build",
+  );
+  assert.equal(
+    harness.summarizeCommandForActivity("composer", ["install", "--no-interaction"]),
+    "composer install",
+  );
+
+  const firstFrame = harness.buildActivityBarFrame("composer install", 0, 12);
+  const secondFrame = harness.buildActivityBarFrame("composer install", 3, 12);
+
+  assert.match(firstFrame, /Working/);
+  assert.match(firstFrame, /\[████░{8}\]/);
+  assert.match(secondFrame, /\[░{3}████░{5}\]/);
+});
+
 test("failure summary helpers describe recovery steps for command and permission issues", () => {
   const harness = loadInstallerHarness();
   const events = {
