@@ -10,7 +10,7 @@ Modern terminal setup, update, and diagnostics for Laravel 12 + Filament 5.
 
 Made with <3 by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*.
 
-Current version: **0.1.16** (Rosie)
+Current version: **0.1.17** (Rosie)
 
 > [!NOTE]
 > `instalar.sh` stays intentionally **single-file**:
@@ -78,6 +78,9 @@ Preview a run without changing files:
 # Update the current Laravel project
 ./instalar.sh --mode update
 
+# Upgrade Composer dependencies during update mode
+./instalar.sh --mode update --upgrade-dependencies
+
 # Diagnose the current Laravel project without repair prompts
 ./instalar.sh --mode doctor --non-interactive --log-file ./doctor.log
 
@@ -97,6 +100,7 @@ Preview a run without changing files:
 - Writes plain-text runtime logs with `--log-file <path>`
 - Hides sensitive values in prompts and logs wherever possible
 - Detects system dependencies and can install or update missing tooling
+- Enforces minimum versions for required Bash-phase dependencies before the Node runtime starts
 - Installs and configures Filament, Fortify, Boost, and optional packages
 - Runs optimize, build, and health-check steps in a practical order
 - Prints concise recovery guidance for failed Composer, npm, Artisan, and permission steps
@@ -145,6 +149,7 @@ flowchart LR
 | `--print-plan` | Legacy alias for `--dry-run` |
 | `--log-file <path>` | Write installer output to a plain-text log file |
 | `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
+| `--upgrade-dependencies` | Use `composer update` instead of the lockfile-safe default in update mode |
 | `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
 | `--continue-on-health-check-failure` | Continue unattended runs after failed final health checks |
 | `--mode <auto\|manual\|update\|doctor>` | Force a specific mode |
@@ -214,7 +219,9 @@ Manual mode also supports:
 
 - Works against the current Laravel project in the current directory
 - Prints the detected package stack before execution
-- Runs `composer update`, migrations, optimize, and frontend build steps
+- Runs `composer install` by default to respect the current lockfile
+- Only runs `composer update` when `--upgrade-dependencies` is set explicitly
+- Continues with migrations, optimize, and frontend build steps after dependency sync
 
 ### Doctor
 
@@ -399,7 +406,7 @@ v<version>-<codename>
 For this release:
 
 ```text
-v0.1.16-Rosie
+v0.1.17-Rosie
 ```
 
 ## Project Layout
