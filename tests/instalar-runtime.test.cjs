@@ -55,24 +55,32 @@ test("runtime resolves dry-run aliases and log files from CLI and config", () =>
   const harness = loadInstallerHarness();
 
   const cliRuntime = harness.resolveRuntime(
-    harness.parseCliArgs(["--dry-run", "--log-file", "logs/installer.log"]),
+    harness.parseCliArgs([
+      "--dry-run",
+      "--log-file",
+      "logs/installer.log",
+      "--display-command-output",
+    ]),
     {},
     null,
   );
 
   assert.equal(cliRuntime.printPlan, true);
   assert.equal(cliRuntime.logFile, path.resolve(process.cwd(), "logs/installer.log"));
+  assert.equal(cliRuntime.displayCommandOutput, true);
 
   const configRuntime = harness.resolveRuntime(
     harness.parseCliArgs([]),
     {
       dryRun: true,
       logFile: "./logs/config-instalar.log",
+      displayCommandOutput: true,
     },
     "/tmp/instalar/config/instalar.json",
   );
 
   assert.equal(configRuntime.printPlan, true);
+  assert.equal(configRuntime.displayCommandOutput, true);
   assert.equal(
     configRuntime.logFile,
     path.resolve("/tmp/instalar/config", "logs/config-instalar.log"),

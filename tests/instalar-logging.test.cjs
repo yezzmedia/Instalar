@@ -74,6 +74,144 @@ test("buildCommandFailureSnippet keeps recent stdout and stderr context readable
   assert.match(snippet, /trace line/);
 });
 
+test("shouldDisplayCommandOutput stays quiet by default and opens up for verbose/debug or the explicit flag", () => {
+  const harness = loadInstallerHarness();
+
+  assert.equal(
+    harness.shouldDisplayCommandOutput(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: false, debug: false },
+    ),
+    false,
+  );
+  assert.equal(
+    harness.shouldDisplayCommandOutput(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: true, verbose: false, debug: false },
+    ),
+    true,
+  );
+  assert.equal(
+    harness.shouldDisplayCommandOutput(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: true, debug: false },
+    ),
+    true,
+  );
+  assert.equal(
+    harness.shouldDisplayCommandOutput(
+      { interactive: true, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: false, debug: false },
+    ),
+    true,
+  );
+});
+
+test("shouldAnimateCommandActivity only enables the moving bar for quiet TTY runs", () => {
+  const harness = loadInstallerHarness();
+
+  harness.process.stdout.isTTY = true;
+
+  assert.equal(
+    harness.shouldAnimateCommandActivity(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: false, debug: false },
+    ),
+    true,
+  );
+  assert.equal(
+    harness.shouldAnimateCommandActivity(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: true, verbose: false, debug: false },
+    ),
+    false,
+  );
+  assert.equal(
+    harness.shouldAnimateCommandActivity(
+      { interactive: false, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: true, debug: false },
+    ),
+    false,
+  );
+  assert.equal(
+    harness.shouldAnimateCommandActivity(
+      { interactive: true, displayCommandOutput: false },
+      { displayCommandOutput: false, verbose: false, debug: false },
+    ),
+    false,
+  );
+
+  harness.process.stdout.isTTY = false;
+});
+
+test("runPotentiallyInteractiveArtisanCommand switches to visible interactive mode", async () => {
+  const harness = loadInstallerHarness();
+  const infos = [];
+  const calls = [];
+
+  harness.state.runtime.nonInteractive = false;
+  harness.setInfo((message) => {
+    infos.push(message);
+  });
+  harness.setRunArtisanIfAvailable(async (projectDir, commandName, args, messageIfMissing, options) => {
+    calls.push({ projectDir, commandName, args, messageIfMissing, options });
+    return true;
+  });
+
+  const result = await harness.runPotentiallyInteractiveArtisanCommand(
+    "/tmp/demo-project",
+    "reverb:install",
+    [],
+    "reverb:install not available, skipping.",
+    {
+      interactiveNotice: "Reverb install may ask interactive questions.",
+      skipMessage: "should not be used",
+    },
+  );
+
+  assert.equal(result, true);
+  assert.deepEqual(infos, ["Reverb install may ask interactive questions."]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].commandName, "reverb:install");
+  assert.equal(calls[0].messageIfMissing, "reverb:install not available, skipping.");
+  assert.equal(calls[0].options.interactive, true);
+  assert.equal(calls[0].options.captureOutput, false);
+  assert.equal(calls[0].options.displayCommandOutput, true);
+});
+
+test("runPotentiallyInteractiveArtisanCommand skips and records a manual step in non-interactive mode", async () => {
+  const harness = loadInstallerHarness();
+  const warnings = [];
+
+  harness.state.runtime.nonInteractive = true;
+  harness.state.finalWarnings = [];
+  harness.setWarn((message) => {
+    warnings.push(message);
+  });
+  harness.setRunArtisanIfAvailable(async () => {
+    throw new Error("runArtisanIfAvailable should not be called in non-interactive mode");
+  });
+
+  const result = await harness.runPotentiallyInteractiveArtisanCommand(
+    "/tmp/demo-project",
+    "modules:install",
+    [],
+    "modules:install not available, skipping.",
+    {
+      skipMessage:
+        "Skipping modules:install in non-interactive mode. Run 'php artisan modules:install' manually.",
+    },
+  );
+
+  assert.equal(result, false);
+  assert.deepEqual(warnings, [
+    "Skipping modules:install in non-interactive mode. Run 'php artisan modules:install' manually.",
+  ]);
+  assert.deepEqual(harness.state.finalWarnings, [
+    "Skipping modules:install in non-interactive mode. Run 'php artisan modules:install' manually.",
+  ]);
+});
+
 test("runCommand attaches a recovery summary to required command failures", async () => {
   const harness = loadInstallerHarness();
   const originalConsoleLog = console.log;

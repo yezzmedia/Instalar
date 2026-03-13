@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.17"
+SCRIPT_VERSION="0.1.18"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -144,12 +144,12 @@ fail() {
 section() {
   local title line_width line
   title="${1^^}"
-  line_width=$(( 72 - ${#title} - 4 ))
-  if (( line_width < 12 )); then
-    line_width=12
+  line_width=$(( 68 - ${#title} - 4 ))
+  if (( line_width < 10 )); then
+    line_width=10
   fi
-  line="$(printf '%*s' "${line_width}" '' | tr ' ' '=')"
-  printf '\n%b\n' "$(paint "${BOLD}${WHITE}" "== ${title} ${line}")"
+  line="$(printf '%*s' "${line_width}" '' | tr ' ' '─')"
+  printf '\n%b\n' "$(paint "${BOLD}${LIGHT_BLUE}" "╭─ ${title} ${line}")"
 }
 
 # The framed large logo needs at least 80 columns to render without wrapping.
@@ -232,6 +232,7 @@ banner() {
   print_brand_header
   printf '%b\n' "$(paint "${DIM}" "Modern terminal setup, update, and diagnostics for Laravel + Filament")"
   printf '%b\n' "$(paint "${DIM}" "Choose a mode, review the plan, then let INSTALAR handle the heavy lifting.")"
+  printf '%b\n' "$(paint "${DIM}" "Dependency checks run first, then INSTALAR hands over to the guided runtime.")"
 }
 
 # =============================================================================
@@ -268,6 +269,9 @@ Run controls:
   --dry-run               Resolve input, print the plan, and exit without modifying files
   --print-plan            Legacy alias for --dry-run
   --log-file <path>       Write installer output to a plain-text log file
+  --display-command-output
+                          Show command stdout/stderr while installer steps run
+  --display-info          Alias for --display-command-output
   --preset <name>         Package preset: minimal, standard, or full
   --upgrade-dependencies  Use composer update in update mode
   --skip-boost-install    Skip interactive boost:install step
@@ -1577,6 +1581,7 @@ const state = {
     allowDeleteExisting: false,
     allowDeleteAnyExisting: false,
     upgradeDependencies: false,
+    displayCommandOutput: false,
     logFile: null,
     logFileWriteFailed: false,
     skipBoostInstall: false,
@@ -1712,25 +1717,38 @@ function resetRunState() {
   state.boostInstallSkipped = false;
 }
 
+function buildProgressMeter(current, total, width = 18) {
+  const safeTotal = Math.max(1, Number(total) || 1);
+  const safeCurrent = Math.min(safeTotal, Math.max(0, Number(current) || 0));
+  const safeWidth = Math.max(6, Number(width) || 18);
+  const filled = Math.round((safeCurrent / safeTotal) * safeWidth);
+  return `${"█".repeat(filled)}${"░".repeat(Math.max(0, safeWidth - filled))}`;
+}
+
 // Prints a visual section heading.
 function section(title) {
   const label = String(title).toUpperCase();
-  const line = "=".repeat(Math.max(12, 64 - label.length - 4));
+  const line = "─".repeat(Math.max(10, 64 - label.length - 4));
   console.log("");
-  console.log(color(`== ${label} ${line}`, C.bold + C.white));
+  console.log(color(`  ╭─ ${label} ${line}`, C.bold + C.cyan));
   appendToRuntimeLog(`\n${title}\n`);
 }
 
 // Prints a compact subsection heading used inside plans and summaries.
 function subsection(title) {
   console.log("");
-  console.log(`  ${color(`[${title}]`, C.bold + C.cyan)}`);
+  console.log(`  ${color("├─", C.dim + C.cyan)} ${color(title, C.bold + C.white)}`);
   appendToRuntimeLog(`\n  ${title}\n`);
 }
 
 // Writes a plain detail line without the heavier [INFO] prefix.
 function detail(message = "") {
-  console.log(`  ${message}`);
+  const prefix = color("│", C.dim + C.cyan);
+  if (message === "") {
+    console.log(`  ${prefix}`);
+  } else {
+    console.log(`  ${prefix} ${message}`);
+  }
   appendToRuntimeLog(`  ${stripAnsi(message)}\n`);
 }
 
@@ -1924,6 +1942,7 @@ function printStepCard(step, total, title, description = "") {
   if (description) {
     detail(description);
   }
+  detail(`Progress: ${buildProgressMeter(step, total)} ${step}/${total}`);
 }
 
 const INSTALLER_MODE_DEFINITIONS = [
@@ -2011,6 +2030,18 @@ const RUNTIME_OPTION_DEFINITIONS = [
     missingValueWarning: "--log-file requires a path.",
     helpGroup: "common",
     helpLines: [["--log-file <path>", "Write installer output to a plain-text log file"]],
+  },
+  {
+    key: "displayCommandOutput",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--display-command-output", "--display-info"],
+    configKey: "displayCommandOutput",
+    helpGroup: "common",
+    helpLines: [
+      ["--display-command-output", "Show command stdout/stderr while installer steps run"],
+      ["--display-info", "Alias for --display-command-output"],
+    ],
   },
   {
     key: "preset",
@@ -2174,6 +2205,7 @@ const CONFIG_FIELD_DEFINITIONS = {
   dryRun: { kind: "boolean" },
   printPlan: { kind: "boolean" },
   logFile: { kind: "string", nonEmpty: true },
+  displayCommandOutput: { kind: "boolean" },
   skipBoostInstall: { kind: "boolean", doctorIgnoredConfig: true },
   startServer: { kind: "boolean", doctorIgnoredConfig: true },
   nonInteractive: { kind: "boolean" },
@@ -2531,6 +2563,10 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     upgradeDependencies: Boolean(
       cliOptions.upgradeDependencies ||
         getRuntimeConfigOptionValue("upgradeDependencies", fileConfig) === true,
+    ),
+    displayCommandOutput: Boolean(
+      cliOptions.displayCommandOutput ||
+        getRuntimeConfigOptionValue("displayCommandOutput", fileConfig) === true,
     ),
     logFile,
     skipBoostInstall: Boolean(
@@ -3143,6 +3179,95 @@ function appendOutputTail(current, chunk, limit = 12000) {
   return combined.length > limit ? combined.slice(-limit) : combined;
 }
 
+function truncateTextMiddle(value, maxLength = 44) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const safeLength = Math.max(12, maxLength);
+  const visible = safeLength - 1;
+  const head = Math.ceil(visible / 2);
+  const tail = Math.floor(visible / 2);
+  return `${text.slice(0, head)}…${text.slice(-tail)}`;
+}
+
+function summarizeCommandForActivity(command, args = []) {
+  if (command === "php" && Array.isArray(args) && args[0] === "artisan") {
+    return `artisan ${artisanCommandLabel(args) || "command"}`;
+  }
+
+  if (command === "npm") {
+    return `npm ${args.slice(0, 2).join(" ").trim() || "command"}`.trim();
+  }
+
+  if (command === "composer") {
+    return `composer ${args[0] || "command"}`.trim();
+  }
+
+  if (command === "laravel") {
+    return `laravel ${args[0] || "command"}`.trim();
+  }
+
+  return `${command} ${args[0] || ""}`.trim();
+}
+
+function buildActivityBarFrame(label, tick = 0, width = 16) {
+  const safeWidth = Math.max(8, Number(width) || 16);
+  const travel = Math.max(0, safeWidth - 4);
+  const period = Math.max(1, travel * 2);
+  const offset = Number(tick) % period;
+  const position = offset <= travel ? offset : period - offset;
+  const bar = `${"░".repeat(position)}${"████"}${"░".repeat(Math.max(0, travel - position))}`;
+  return `  ${color("│", C.dim + C.cyan)} ${color("Working", C.dim + C.cyan)} ${truncateTextMiddle(label, 34)} ${color(`[${bar}]`, C.bold + C.cyan)}`;
+}
+
+function shouldAnimateCommandActivity(options = {}, runtimeOptions = state.runtime) {
+  return Boolean(
+    process.stdout?.isTTY &&
+      !shouldDisplayCommandOutput(options, runtimeOptions) &&
+      !runtimeOptions.debug,
+  );
+}
+
+function createCommandActivityIndicator(label, options = {}, runtimeOptions = state.runtime) {
+  const enabled = shouldAnimateCommandActivity(options, runtimeOptions);
+  let tick = 0;
+  let interval = null;
+  let lastWidth = 0;
+
+  const render = () => {
+    const frame = buildActivityBarFrame(label, tick);
+    tick += 1;
+    lastWidth = terminalStringWidth(frame);
+    process.stdout.write(`\r${frame}`);
+  };
+
+  return {
+    enabled,
+    start() {
+      if (!enabled || interval) {
+        return;
+      }
+
+      render();
+      interval = setInterval(render, 90);
+    },
+    stop() {
+      if (!enabled) {
+        return;
+      }
+
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+
+      process.stdout.write(`\r${" ".repeat(lastWidth)}\r`);
+    },
+  };
+}
+
 function formatOutputSnippet(output, label) {
   const sanitized = stripAnsi(output || "").trim();
   if (!sanitized) {
@@ -3178,6 +3303,7 @@ function runProcess(command, args, options = {}) {
     env = process.env,
     interactive = false,
     captureOutput = false,
+    streamOutput = false,
   } = options;
   // Output capture is only safe when the command uses inherited stdio and does
   // not need interactive control of the terminal.
@@ -3196,10 +3322,13 @@ function runProcess(command, args, options = {}) {
       if (child.stdout) {
         child.stdout.on("data", (chunk) => {
           // Mirror captured output back to the terminal so live progress stays
-          // visible while still retaining the tail for failure reporting.
+          // visible when explicitly enabled while still retaining the tail for
+          // failure reporting and runtime log capture.
           const text = chunk.toString();
           stdout = appendOutputTail(stdout, text);
-          process.stdout.write(chunk);
+          if (streamOutput) {
+            process.stdout.write(chunk);
+          }
           appendToRuntimeLog(text);
         });
       }
@@ -3208,7 +3337,9 @@ function runProcess(command, args, options = {}) {
         child.stderr.on("data", (chunk) => {
           const text = chunk.toString();
           stderr = appendOutputTail(stderr, text);
-          process.stderr.write(chunk);
+          if (streamOutput) {
+            process.stderr.write(chunk);
+          }
           appendToRuntimeLog(text);
         });
       }
@@ -3245,6 +3376,19 @@ function formatCommandForDisplay(command, args, redactedValues = []) {
   return redactText(`${command} ${args.join(" ")}`.trim(), redactedValues);
 }
 
+function shouldDisplayCommandOutput(options = {}, runtimeOptions = state.runtime) {
+  if (options.interactive) {
+    return true;
+  }
+
+  return Boolean(
+    options.displayCommandOutput ||
+      runtimeOptions.displayCommandOutput ||
+      runtimeOptions.verbose ||
+      runtimeOptions.debug,
+  );
+}
+
 // Executes a command with standard installer logging and optional failure behavior.
 async function runCommand(command, args, options = {}) {
   const {
@@ -3255,10 +3399,20 @@ async function runCommand(command, args, options = {}) {
     stdio = "inherit",
     interactive = false,
     captureOutput = stdio === "inherit" && !interactive,
+    displayCommandOutput = false,
     redactedValues = [],
     successLabel = null,
   } = options;
   const cmdStr = formatCommandForDisplay(command, args, redactedValues);
+  const streamCommandOutput = shouldDisplayCommandOutput(
+    { interactive, displayCommandOutput },
+    state.runtime,
+  );
+  const activityIndicator = createCommandActivityIndicator(
+    summarizeCommandForActivity(command, args),
+    { interactive, displayCommandOutput },
+    state.runtime,
+  );
 
   // Use verbose() if verbose or debug is enabled
   if (state.runtime.verbose || state.runtime.debug) {
@@ -3268,10 +3422,20 @@ async function runCommand(command, args, options = {}) {
   }
 
   try {
-    await runProcess(command, args, { cwd, env, stdio, interactive, captureOutput });
+    activityIndicator.start();
+    await runProcess(command, args, {
+      cwd,
+      env,
+      stdio,
+      interactive,
+      captureOutput,
+      streamOutput: streamCommandOutput,
+    });
+    activityIndicator.stop();
     ok(successLabel || `${command} ${args[0] ?? ""}`.trim());
     return { exitCode: 0, success: true };
   } catch (error) {
+    activityIndicator.stop();
     const exitCode = error.exitCode || 1;
     const failureMessage = `Command failed (exit ${exitCode}): ${cmdStr}`;
     const failureSnippet = buildCommandFailureSnippet(error);
@@ -3324,7 +3488,13 @@ async function runArtisanIfAvailable(
   messageIfMissing = "",
   options = {},
 ) {
-  const { warnOnFailure = true } = options;
+  const {
+    warnOnFailure = true,
+    interactive = false,
+    captureOutput = undefined,
+    displayCommandOutput = false,
+    required = false,
+  } = options;
 
   const exists = await artisanCommandExists(projectDir, commandName);
   if (!exists) {
@@ -3338,8 +3508,40 @@ async function runArtisanIfAvailable(
 
   return runCommand("php", ["artisan", commandName, ...args], {
     cwd: projectDir,
-    required: false,
+    required,
     warnOnFailure,
+    interactive,
+    captureOutput,
+    displayCommandOutput,
+  });
+}
+
+async function runPotentiallyInteractiveArtisanCommand(
+  projectDir,
+  commandName,
+  args = [],
+  messageIfMissing = "",
+  options = {},
+) {
+  const {
+    skipMessage = `Skipping ${commandName} in non-interactive mode. Run 'php artisan ${commandName}' manually.`,
+    interactiveNotice = `${commandName} may ask interactive questions.`,
+    warnOnFailure = false,
+    required = false,
+  } = options;
+
+  if (state.runtime.nonInteractive) {
+    warnFinal(skipMessage);
+    return false;
+  }
+
+  info(interactiveNotice);
+  return runArtisanIfAvailable(projectDir, commandName, args, messageIfMissing, {
+    warnOnFailure,
+    required,
+    interactive: true,
+    captureOutput: false,
+    displayCommandOutput: true,
   });
 }
 
@@ -4547,12 +4749,17 @@ async function ensureNwidartCoreModule(projectDir, packages) {
     );
   }
 
-  await runArtisanIfAvailable(
+  await runPotentiallyInteractiveArtisanCommand(
     projectDir,
     "module:filament:install",
     ["CoreModule"],
     "module:filament:install not available, skipping.",
-    { warnOnFailure: false },
+    {
+      warnOnFailure: false,
+      skipMessage:
+        "Skipping module:filament:install in non-interactive mode. Run 'php artisan module:filament:install CoreModule' manually.",
+      interactiveNotice: "module:filament:install may ask interactive questions.",
+    },
   );
 }
 
@@ -4798,13 +5005,17 @@ async function runSetupCommands(projectDir, packages, config) {
     if (fs.existsSync(path.join(projectDir, "config", "reverb.php"))) {
       info("Reverb is already configured, skipping reverb:install.");
     } else {
-      info("Reverb install may ask interactive questions.");
-      await runArtisanIfAvailable(
+      await runPotentiallyInteractiveArtisanCommand(
         projectDir,
         "reverb:install",
         [],
         "reverb:install not available, skipping.",
-        { warnOnFailure: false },
+        {
+          warnOnFailure: false,
+          skipMessage:
+            "Skipping reverb:install in non-interactive mode. Run 'php artisan reverb:install' manually.",
+          interactiveNotice: "Reverb install may ask interactive questions.",
+        },
       );
     }
   }
@@ -4828,13 +5039,17 @@ async function runSetupCommands(projectDir, packages, config) {
   }
 
   if (packages.has("coolsam/modules")) {
-    info("Running modules:install");
-    await runArtisanIfAvailable(
+    await runPotentiallyInteractiveArtisanCommand(
       projectDir,
       "modules:install",
-      ["--no-interaction"],
+      [],
       "modules:install not available, skipping.",
-      { warnOnFailure: false },
+      {
+        warnOnFailure: false,
+        skipMessage:
+          "Skipping modules:install in non-interactive mode. Run 'php artisan modules:install' manually.",
+        interactiveNotice: "modules:install may ask interactive questions.",
+      },
     );
 
     info("Publishing modules-config");

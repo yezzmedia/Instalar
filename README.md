@@ -6,11 +6,15 @@
 [![Laravel](https://img.shields.io/badge/Laravel-12-blue?style=flat)](https://laravel.com/)
 [![Filament](https://img.shields.io/badge/Filament-5-blueviolet?style=flat)](https://filamentphp.com/)
 
+<p align="center">
+  <img src="./instalar-logo-v1.png" alt="INSTALAR logo" width="960">
+</p>
+
 Modern terminal setup, update, and diagnostics for Laravel 12 + Filament 5.
 
 Made with <3 by [yezzmedia.com](https://yezzmedia.com) *(coming soon)*.
 
-Current version: **0.1.17** (Rosie)
+Current version: **0.1.18** (Rosie)
 
 > [!NOTE]
 > `instalar.sh` stays intentionally **single-file**:
@@ -31,7 +35,16 @@ It focuses on:
 
 ## Quick Start
 
+Run INSTALAR directly without downloading the script first:
+
 ```bash
+curl -fsSL https://yezzmedia.com/instalar.sh | bash
+```
+
+Or keep a local copy:
+
+```bash
+curl -fsSL https://yezzmedia.com/instalar.sh -o instalar.sh
 chmod +x instalar.sh
 ./instalar.sh
 ```
@@ -148,6 +161,8 @@ flowchart LR
 | `--dry-run` | Resolve the run, print the review, and exit without changing files |
 | `--print-plan` | Legacy alias for `--dry-run` |
 | `--log-file <path>` | Write installer output to a plain-text log file |
+| `--display-command-output` | Show command stdout/stderr while installer steps run |
+| `--display-info` | Alias for `--display-command-output` |
 | `--preset <minimal\|standard\|full>` | Choose the default optional package bundle |
 | `--upgrade-dependencies` | Use `composer update` instead of the lockfile-safe default in update mode |
 | `--skip-boost-install` | Skip the interactive `php artisan boost:install` step |
@@ -167,6 +182,8 @@ flowchart LR
 - Every install and update run resolves into a **grouped review screen** before execution.
 - `--dry-run` resolves the same review, prints it, and exits without touching project files.
 - `--log-file <path>` stores installer status lines and captured command context in plain text.
+- Command output from Composer, npm, and Artisan stays hidden by default so the installer UI remains readable.
+- Use `--display-command-output`, `--display-info`, or `--verbose` when you want to see live subprocess output.
 - Plan and log output never prints configured passwords in clear text.
 - Interactive confirmations accept English answers only: `y`, `yes`, `n`, `no`.
 
@@ -406,7 +423,7 @@ v<version>-<codename>
 For this release:
 
 ```text
-v0.1.17-Rosie
+v0.1.18-Rosie
 ```
 
 ## Project Layout
