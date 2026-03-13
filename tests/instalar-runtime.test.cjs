@@ -19,6 +19,7 @@ test("runtime options merge the health-check override from CLI and JSON config",
     "full",
     "--allow-delete-any-existing",
     "--continue-on-health-check-failure",
+    "--upgrade-dependencies",
   ]);
   const cliRuntime = harness.resolveRuntime(cliOptions, {}, null);
 
@@ -28,12 +29,14 @@ test("runtime options merge the health-check override from CLI and JSON config",
   assert.equal(cliRuntime.preset, "full");
   assert.equal(cliRuntime.allowDeleteAnyExisting, true);
   assert.equal(cliRuntime.continueOnHealthCheckFailure, true);
+  assert.equal(cliRuntime.upgradeDependencies, true);
   assert.equal(cliRuntime.skipBoostInstall, true);
 
   const configRuntime = harness.resolveRuntime(
     harness.parseCliArgs(["--non-interactive"]),
     {
       continueOnHealthCheckFailure: true,
+      upgradeDependencies: true,
       preset: "minimal",
       printPlan: true,
     },
@@ -41,6 +44,7 @@ test("runtime options merge the health-check override from CLI and JSON config",
   );
 
   assert.equal(configRuntime.continueOnHealthCheckFailure, true);
+  assert.equal(configRuntime.upgradeDependencies, true);
   assert.equal(configRuntime.printPlan, true);
   assert.equal(configRuntime.preset, "minimal");
   assert.equal(configRuntime.skipBoostInstall, true);
@@ -310,6 +314,44 @@ test("main runs an unattended update dry-run for the current Laravel project", a
   assert.deepEqual(subsections, ["Project Snapshot", "Run Controls", "Detected Stack"]);
   assert.ok(details.some((message) => new RegExp(`Project:\\s+${projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(message)));
   assert.ok(details.some((message) => /Dry run:\s+yes$/.test(message)));
+  assert.ok(
+    details.some((message) => /Composer dependencies:\s+install \(lockfile-safe\)$/.test(message)),
+  );
   assert.ok(oks.includes("Preview only. No project files will be modified."));
   assert.equal(fs.existsSync(path.join(projectPath, "public", "storage")), true);
+});
+
+test("main shows the explicit dependency upgrade strategy in update dry-runs", async () => {
+  const harness = loadInstallerHarness();
+  const projectPath = createProjectFixture();
+  const originalCwd = harness.process.cwd;
+  const details = [];
+
+  harness.process.argv = [
+    "node",
+    "instalar.sh",
+    "--mode",
+    "update",
+    "--non-interactive",
+    "--dry-run",
+    "--upgrade-dependencies",
+  ];
+  harness.process.cwd = () => projectPath;
+  harness.setSection(() => {});
+  harness.setSubsection(() => {});
+  harness.setInfo(() => {});
+  harness.setOk(() => {});
+  harness.setDetail((message) => {
+    details.push(message);
+  });
+
+  try {
+    await harness.main();
+  } finally {
+    harness.process.cwd = originalCwd;
+  }
+
+  assert.ok(
+    details.some((message) => /Composer dependencies:\s+update \(\-\-upgrade-dependencies\)$/.test(message)),
+  );
 });

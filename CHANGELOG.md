@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.17] - 2026-03-13 (Rosie)
+
+### Added
+
+- `--upgrade-dependencies` to opt into `composer update` during update mode
+- Bash-phase minimum version checks for required dependencies before the Node runtime starts
+- Regression coverage for safer update planning, final warning separation, custom Nwidart Vite fallbacks, and minimum-version enforcement
+
+### Changed
+
+- Update mode now defaults to lockfile-safe `composer install` and only upgrades dependencies when requested explicitly
+- Final completion output now shows only unresolved run warnings instead of transient prompt validation noise
+- Refactored the Node entrypoint into smaller mode dispatch helpers so auto, manual, update, and detected-project flows share less duplicated control flow
+
+### Fixed
+
+- Skip aggressive automatic rewrites for customized `vite.config.js` files in Nwidart projects and keep them unchanged with a clear warning instead
+- Record continued health-check and permission issues in the final completion summary when a run is allowed to finish anyway
+
 ## [0.1.16] - 2026-03-11 (Rosie)
 
 ### Fixed

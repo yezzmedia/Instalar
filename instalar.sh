@@ -36,7 +36,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-SCRIPT_VERSION="0.1.16"
+SCRIPT_VERSION="0.1.17"
 SCRIPT_CODENAME="Rosie"
 
 # =============================================================================
@@ -78,6 +78,13 @@ PKG_INDEX_REFRESHED=0             # Flag to prevent multiple package index refre
 declare -a DEPS=(php composer laravel node npm)                 # Required dependencies
 declare -A DEP_AVAILABLE=()                                    # Maps dep name -> 1 if available
 declare -A DEP_VERSION=()                                      # Maps dep name -> version string
+declare -A DEP_MIN_VERSION=(
+  [php]="8.5.0"
+  [composer]="2.7.0"
+  [laravel]="5.0.0"
+  [node]="20.0.0"
+  [npm]="10.0.0"
+)
 declare -a DEPS_WITH_UPDATES=()                                # List of deps with available updates
 declare -A DEP_UPDATE_CURRENT=()                               # Maps dep name -> current version
 declare -A DEP_UPDATE_TARGET=()                                # Maps dep name -> target version
@@ -262,6 +269,7 @@ Run controls:
   --print-plan            Legacy alias for --dry-run
   --log-file <path>       Write installer output to a plain-text log file
   --preset <name>         Package preset: minimal, standard, or full
+  --upgrade-dependencies  Use composer update in update mode
   --skip-boost-install    Skip interactive boost:install step
   --backup                Backup existing target directory before replacing
   --start-server          Automatically run composer run dev at the end
@@ -576,9 +584,72 @@ print_dep_table() {
 # Returns: Normalized version on stdout (e.g., "8.5.0")
 normalize_version() {
   local value="$1"
-  value="${value#v}"
-  value="${value%% *}"
+  value="$(extract_semver "${value}")"
   printf '%s' "${value}"
+}
+
+# Extracts the first semantic version-like token from arbitrary version output.
+# Args:
+#   $1 - Raw version string
+# Returns: Normalized x.y.z version string or empty output if no version is found
+extract_semver() {
+  local value="$1"
+  local version=""
+
+  version="$(printf '%s\n' "${value}" | grep -Eo '[0-9]+(\.[0-9]+){1,2}' | head -n 1 || true)"
+  if [[ -z "${version}" ]]; then
+    return 0
+  fi
+
+  local first="" second="" third=""
+  IFS='.' read -r first second third <<< "${version}"
+  second="${second:-0}"
+  third="${third:-0}"
+  printf '%s.%s.%s' "${first}" "${second}" "${third}"
+}
+
+# Returns success when the current version is greater than or equal to the minimum version.
+# Args:
+#   $1 - Current version
+#   $2 - Minimum required version
+version_at_least() {
+  local current="$1"
+  local minimum="$2"
+
+  if [[ -z "${current}" || -z "${minimum}" ]]; then
+    return 1
+  fi
+
+  [[ "$(printf '%s\n%s\n' "${minimum}" "${current}" | sort -V | head -n 1)" == "${minimum}" ]]
+}
+
+# Validates detected dependency versions against the installer's minimum requirements.
+check_minimum_dependency_versions() {
+  local dep
+  local failures=0
+
+  for dep in "${DEPS[@]}"; do
+    if (( DEP_AVAILABLE["${dep}"] == 0 )); then
+      continue
+    fi
+
+    local minimum_version="${DEP_MIN_VERSION[$dep]:-}"
+    if [[ -z "${minimum_version}" ]]; then
+      continue
+    fi
+
+    local current_version=""
+    current_version="$(extract_semver "${DEP_VERSION[$dep]}")"
+
+    if version_at_least "${current_version}" "${minimum_version}"; then
+      continue
+    fi
+
+    fail "Dependency version too old: ${dep} ${current_version:-unknown} found, need >= ${minimum_version}."
+    failures=1
+  done
+
+  return "${failures}"
 }
 
 # =============================================================================
@@ -1095,6 +1166,10 @@ check_and_prepare_dependencies() {
       fi
     done
 
+    if ! check_minimum_dependency_versions; then
+      exit 1
+    fi
+
     ok "Dependency inspection complete. Continuing with plan preview."
     return 0
   fi
@@ -1154,6 +1229,10 @@ check_and_prepare_dependencies() {
         warn "Updates were skipped."
       fi
     fi
+  fi
+
+  if ! check_minimum_dependency_versions; then
+    exit 1
   fi
 
   ok "Dependencies are ready. Continuing with installation."
@@ -1486,6 +1565,7 @@ const PACKAGE_PRESETS = [
 // Shared runtime state for warnings, generated admin credentials, and resolved options.
 const state = {
   warnings: [],
+  finalWarnings: [],
   createdAdmin: null,
   boostInstallSkipped: false,
   runtime: {
@@ -1496,6 +1576,7 @@ const state = {
     adminGenerate: false,
     allowDeleteExisting: false,
     allowDeleteAnyExisting: false,
+    upgradeDependencies: false,
     logFile: null,
     logFileWriteFailed: false,
     skipBoostInstall: false,
@@ -1582,11 +1663,24 @@ function ok(message) {
   appendToRuntimeLog(`  [ OK ] ${message}\n`);
 }
 
-// Prints a warning message and stores it for the final summary.
+// Prints a warning message and keeps it in the transient warning log.
 function warn(message) {
   state.warnings.push(message);
   console.log(`  ${color("[WARN]", C.yellow)} ${message}`);
   appendToRuntimeLog(`  [WARN] ${message}\n`);
+}
+
+// Records a warning for the final completion summary without printing it again.
+function recordFinalWarning(message) {
+  if (!state.finalWarnings.includes(message)) {
+    state.finalWarnings.push(message);
+  }
+}
+
+// Prints a warning message and records it for the final completion summary.
+function warnFinal(message) {
+  warn(message);
+  recordFinalWarning(message);
 }
 
 // Prints an error message.
@@ -1609,6 +1703,13 @@ function debug(message) {
     console.log(color(`  [DEBUG] ${message}`, C.gray));
     appendToRuntimeLog(`  [DEBUG] ${message}\n`);
   }
+}
+
+function resetRunState() {
+  state.warnings = [];
+  state.finalWarnings = [];
+  state.createdAdmin = null;
+  state.boostInstallSkipped = false;
 }
 
 // Prints a visual section heading.
@@ -1772,6 +1873,22 @@ function buildPermissionFailureSummary(projectPath, permissionReport) {
   };
 }
 
+function resolveUpdateDependencyStrategy(runtimeOptions = state.runtime) {
+  if (runtimeOptions.upgradeDependencies) {
+    return {
+      label: "update (--upgrade-dependencies)",
+      command: "composer",
+      args: ["update", "--no-interaction"],
+    };
+  }
+
+  return {
+    label: "install (lockfile-safe)",
+    command: "composer",
+    args: ["install", "--no-interaction"],
+  };
+}
+
 function printFailureSummary(summary) {
   if (!summary) {
     return;
@@ -1906,6 +2023,16 @@ const RUNTIME_OPTION_DEFINITIONS = [
     doctorIgnoredCli: true,
     helpGroup: "common",
     helpLines: [["--preset <name>", "Package preset: minimal, standard, or full"]],
+  },
+  {
+    key: "upgradeDependencies",
+    kind: "boolean",
+    defaultValue: false,
+    cliFlags: ["--upgrade-dependencies"],
+    configKey: "upgradeDependencies",
+    doctorIgnoredCli: true,
+    helpGroup: "common",
+    helpLines: [["--upgrade-dependencies", "Use composer update in update mode"]],
   },
   {
     key: "mode",
@@ -2043,6 +2170,7 @@ const CONFIG_FIELD_DEFINITIONS = {
   backup: { kind: "boolean", doctorIgnoredConfig: true },
   adminGenerate: { kind: "boolean", doctorIgnoredConfig: true },
   continueOnHealthCheckFailure: { kind: "boolean", doctorIgnoredConfig: true },
+  upgradeDependencies: { kind: "boolean", doctorIgnoredConfig: true },
   dryRun: { kind: "boolean" },
   printPlan: { kind: "boolean" },
   logFile: { kind: "string", nonEmpty: true },
@@ -2399,6 +2527,10 @@ function resolveRuntime(cliOptions, fileConfig, configPath) {
     allowDeleteAnyExisting: Boolean(
       cliOptions.allowDeleteAnyExisting ||
         getRuntimeConfigOptionValue("allowDeleteAnyExisting", fileConfig) === true,
+    ),
+    upgradeDependencies: Boolean(
+      cliOptions.upgradeDependencies ||
+        getRuntimeConfigOptionValue("upgradeDependencies", fileConfig) === true,
     ),
     logFile,
     skipBoostInstall: Boolean(
@@ -3809,7 +3941,9 @@ function resolveAdminCredentials(preset = {}, createAdmin = true) {
     };
   }
 
-  warn("Using the default admin password. Prefer --admin-generate or admin.password in config.");
+  warnFinal(
+    "Using the default admin password. Prefer --admin-generate or admin.password in config.",
+  );
   return {
     ...admin,
     password: "password",
@@ -3963,6 +4097,7 @@ function printInstallPlan(config, runtimeOptions = state.runtime) {
 }
 
 function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
+  const dependencyStrategy = resolveUpdateDependencyStrategy(runtimeOptions);
   section("Update Review");
   detail("Inspect the current project state before dependencies, migrations, and builds run.");
   printReviewSection("Project Snapshot", [
@@ -3972,6 +4107,7 @@ function printUpdatePlan(projectDir, packages, runtimeOptions = state.runtime) {
   printReviewSection("Run Controls", [
     ["Dry run", runtimeOptions.printPlan ? "yes" : "no"],
     ["Log file", runtimeOptions.logFile || "-"],
+    ["Composer dependencies", dependencyStrategy.label],
     ["Boost install", runtimeOptions.skipBoostInstall ? "skip" : "run interactively"],
     [
       "Health-check failures",
@@ -4042,6 +4178,59 @@ function indentLines(value, spaces) {
     .split("\n")
     .map((line) => `${indentation}${line}`)
     .join("\n");
+}
+
+function readImportLines(source) {
+  return String(source)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("import "));
+}
+
+function hasOnlySupportedNwidartViteImports(source) {
+  const imports = readImportLines(source);
+  const allowedImports = new Set([
+    "import { defineConfig } from 'vite';",
+    'import { defineConfig } from "vite";',
+    "import laravel from 'laravel-vite-plugin';",
+    'import laravel from "laravel-vite-plugin";',
+    "import tailwindcss from '@tailwindcss/vite';",
+    'import tailwindcss from "@tailwindcss/vite";',
+  ]);
+
+  return imports.length >= 2 && imports.every((line) => allowedImports.has(line));
+}
+
+function hasUnsupportedNwidartViteSettings(source) {
+  return [
+    /\bresolve\s*:/,
+    /\bbuild\s*:/,
+    /\bcss\s*:/,
+    /\bdefine\s*:/,
+    /\bpreview\s*:/,
+    /\bssr\s*:/,
+    /\boptimizeDeps\s*:/,
+    /\bworker\s*:/,
+    /\bassetsInclude\s*:/,
+    /\bbase\s*:/,
+    /\btest\s*:/,
+  ].some((pattern) => pattern.test(source));
+}
+
+function canSafelyRewriteNwidartViteConfig(source) {
+  if (!hasOnlySupportedNwidartViteImports(source)) {
+    return false;
+  }
+
+  if (!source.includes("export default defineConfig({")) {
+    return false;
+  }
+
+  if (hasUnsupportedNwidartViteSettings(source)) {
+    return false;
+  }
+
+  return true;
 }
 
 // =============================================================================
@@ -4140,7 +4329,7 @@ async function ensureNwidartComposerMergeConfig(projectDir, packages) {
   try {
     composerJson = JSON.parse(fs.readFileSync(composerPath, "utf8"));
   } catch {
-    warn("Could not read composer.json. Skipping Nwidart autoload adjustments.");
+    warnFinal("Could not read composer.json. Skipping Nwidart autoload adjustments.");
     return false;
   }
 
@@ -4217,7 +4406,7 @@ async function ensureNwidartViteMainConfig(projectDir, packages) {
 
   const viteConfigPath = path.join(projectDir, "vite.config.js");
   if (!fs.existsSync(viteConfigPath)) {
-    warn("vite.config.js is missing. Skipping Nwidart Vite configuration.");
+    warnFinal("vite.config.js is missing. Skipping Nwidart Vite configuration.");
     return false;
   }
 
@@ -4232,8 +4421,12 @@ async function ensureNwidartViteMainConfig(projectDir, packages) {
     currentConfig,
   );
 
-  if (!hasLaravelPlugin || !hasDefaultInputs) {
-    warn("Could not automatically update vite.config.js for module assets.");
+  if (
+    !hasLaravelPlugin ||
+    !hasDefaultInputs ||
+    !canSafelyRewriteNwidartViteConfig(currentConfig)
+  ) {
+    warnFinal("vite.config.js looks customized. Skipping automatic Nwidart Vite rewrite.");
     info("Please follow Nwidart docs to switch manually to collectModuleAssetsPaths.");
     return false;
   }
@@ -4448,7 +4641,7 @@ function printNwidartSetupSummary(projectDir, packages) {
     missing.push("Modules directory");
   }
 
-  warn(`Nwidart setup incomplete: ${missing.join(", ")}`);
+  warnFinal(`Nwidart setup incomplete: ${missing.join(", ")}`);
 }
 
 // Generates a temporary PHP bootstrap script so the installer can create the
@@ -4702,7 +4895,7 @@ async function runSetupCommands(projectDir, packages, config) {
   if (config.createAdmin && packages.has("filament/filament")) {
     const created = await createFilamentAdminUser(projectDir, config);
     if (!created) {
-      warn("Could not create the Filament admin user automatically.");
+      warnFinal("Could not create the Filament admin user automatically.");
     }
   }
 }
@@ -4863,7 +5056,7 @@ async function runInstallFlow(config, runtimeOptions = state.runtime, flowOption
   if (packageSet.has("laravel/boost")) {
     if (runtimeOptions.skipBoostInstall) {
       state.boostInstallSkipped = true;
-      warn("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
+      warnFinal("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
     } else {
       section("Install Boost");
       info("boost:install is interactive. Please confirm settings now.");
@@ -4895,6 +5088,7 @@ async function runInstallFlow(config, runtimeOptions = state.runtime, flowOption
 // Runs update workflow for an existing Laravel project.
 async function runUpdateFlow(projectDir) {
   const packages = readComposerPackages(projectDir);
+  const dependencyStrategy = resolveUpdateDependencyStrategy(state.runtime);
   printUpdatePlan(projectDir, packages, state.runtime);
 
   if (!state.runtime.nonInteractive) {
@@ -4918,7 +5112,11 @@ async function runUpdateFlow(projectDir) {
   await ensureNwidartModuleStatusesFile(projectDir, packages);
   printNwidartSetupSummary(projectDir, packages);
 
-  await runCommand("composer", ["update", "--no-interaction"], { cwd: projectDir, required: true });
+  section("Composer Dependencies");
+  await runCommand(dependencyStrategy.command, dependencyStrategy.args, {
+    cwd: projectDir,
+    required: true,
+  });
   await runCommand("php", ["artisan", "migrate", "--force", "--no-interaction"], {
     cwd: projectDir,
     required: true,
@@ -4928,7 +5126,7 @@ async function runUpdateFlow(projectDir) {
     state.boostInstallSkipped = false;
     if (state.runtime.skipBoostInstall) {
       state.boostInstallSkipped = true;
-      warn("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
+      warnFinal("Skipping boost:install. Run 'php artisan boost:install' manually when ready.");
     } else {
       section("Install Boost");
       info("boost:install is interactive.");
@@ -4992,8 +5190,8 @@ function printFinalNotes(projectPath, runtimeOptions = state.runtime) {
     printReviewSection("Admin Access", adminEntries);
   }
 
-  if (state.warnings.length > 0) {
-    printBulletSection("Open Warnings", state.warnings);
+  if (state.finalWarnings.length > 0) {
+    printBulletSection("Open Warnings", state.finalWarnings);
   }
 }
 
@@ -5495,6 +5693,7 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
 
     if (runtimeOptions.nonInteractive) {
       if (runtimeOptions.continueOnHealthCheckFailure) {
+        recordFinalWarning(`Health checks still failing: ${failedList}`);
         warn("Continuing because health-check override is enabled for non-interactive mode.");
         return report;
       }
@@ -5508,6 +5707,7 @@ async function runHealthChecks(projectPath, runtimeOptions = state.runtime) {
       fail("Installation aborted by user due to failed health checks.");
       process.exit(1);
     }
+    recordFinalWarning(`Health checks still failing: ${failedList}`);
     info("Continuing despite health check failures...");
   }
 
@@ -5667,6 +5867,9 @@ function printDoctorSummary(projectPath, healthReport, permissionReport) {
 async function runFinalPermissionAndServerStep(projectPath, runtimeOptions = state.runtime) {
   const permissionReport = runPermissionChecks(projectPath, { sectionTitle: "Permissions" });
   if (permissionReport.failedChecks.length > 0) {
+    recordFinalWarning(
+      `Permission checks need attention: ${permissionReport.failedChecks.join(", ")}`,
+    );
     printFailureSummary(buildPermissionFailureSummary(projectPath, permissionReport));
   }
 
@@ -5737,6 +5940,108 @@ async function finalizeProject(projectPath, runtimeOptions = state.runtime) {
   await runHealthChecks(projectPath, runtimeOptions);
   await runFinalPermissionAndServerStep(projectPath, runtimeOptions);
   printFinalNotes(projectPath, runtimeOptions);
+}
+
+async function runUpdateMode(projectDir, runtimeOptions = state.runtime) {
+  if (!isLaravelProject(projectDir)) {
+    throw new Error("Update mode requires a Laravel project in the current directory.");
+  }
+
+  resetRunState();
+
+  if (runtimeOptions.printPlan) {
+    printUpdatePlan(projectDir, readComposerPackages(projectDir), runtimeOptions);
+    return;
+  }
+
+  await runUpdateFlow(projectDir);
+  await finalizeProject(projectDir, runtimeOptions);
+}
+
+async function runDoctorMode(projectDir, runtimeOptions = state.runtime) {
+  resetRunState();
+
+  const doctorSucceeded = await runDoctorFlow(projectDir, runtimeOptions);
+  if (!doctorSucceeded) {
+    process.exitCode = 1;
+  }
+}
+
+async function runAutoMode(runtimeOptions = state.runtime) {
+  resetRunState();
+  const config = await collectAutoConfig(getModePreset("auto"));
+
+  if (runtimeOptions.printPlan) {
+    printInstallPlan(config, runtimeOptions);
+    return;
+  }
+
+  await runInstallFlow(config, runtimeOptions);
+  await finalizeProject(config.projectPath, runtimeOptions);
+}
+
+async function runManualMode(runtimeOptions = state.runtime) {
+  while (true) {
+    resetRunState();
+    const config = await collectManualConfig(getModePreset("manual"));
+
+    if (runtimeOptions.printPlan) {
+      printInstallPlan(config, runtimeOptions);
+      return;
+    }
+
+    const action = await reviewManualConfig(config, runtimeOptions);
+    if (action === "retry") {
+      continue;
+    }
+
+    await runInstallFlow(config, runtimeOptions, {
+      skipPlanPrint: true,
+      skipConfirmPrompt: true,
+    });
+    await finalizeProject(config.projectPath, runtimeOptions);
+    return;
+  }
+}
+
+async function runDetectedProjectFlow(projectDir, runtimeOptions = state.runtime) {
+  const action = await askChoice(
+    "A Laravel project was detected in the current directory",
+    ["Update the current project", "Create a new project (Automatic)", "Create a new project (Manual)"],
+    0,
+  );
+
+  if (action === 0) {
+    await runUpdateMode(projectDir, runtimeOptions);
+    return;
+  }
+
+  if (action === 1) {
+    await runAutoMode(runtimeOptions);
+    return;
+  }
+
+  await runManualMode(runtimeOptions);
+}
+
+async function runInteractiveDefaultFlow(projectDir, runtimeOptions = state.runtime) {
+  if (isLaravelProject(projectDir)) {
+    await runDetectedProjectFlow(projectDir, runtimeOptions);
+    return;
+  }
+
+  const modeChoice = await askChoice(
+    "What do you want to do?",
+    ["Automatic setup", "Guided manual setup"],
+    0,
+  );
+
+  if (modeChoice === 0) {
+    await runAutoMode(runtimeOptions);
+    return;
+  }
+
+  await runManualMode(runtimeOptions);
 }
 
 function formatNodeUsageLine(label, description = "") {
@@ -5845,145 +6150,26 @@ async function main() {
   }
 
   if (mode === "update") {
-    if (!hasLaravelProject) {
-      throw new Error("Update mode requires a Laravel project in the current directory.");
-    }
-
-    if (state.runtime.printPlan) {
-      printUpdatePlan(cwd, readComposerPackages(cwd), state.runtime);
-      return;
-    }
-
-    await runUpdateFlow(cwd);
-    await finalizeProject(cwd, state.runtime);
+    await runUpdateMode(cwd, state.runtime);
     return;
   }
 
   if (mode === "doctor") {
-    const doctorSucceeded = await runDoctorFlow(cwd, state.runtime);
-    if (!doctorSucceeded) {
-      process.exitCode = 1;
-    }
+    await runDoctorMode(cwd, state.runtime);
     return;
   }
 
   if (mode === "auto") {
-    const config = await collectAutoConfig(getModePreset("auto"));
-    if (state.runtime.printPlan) {
-      printInstallPlan(config, state.runtime);
-      return;
-    }
-    await runInstallFlow(config, state.runtime);
-    await finalizeProject(config.projectPath, state.runtime);
+    await runAutoMode(state.runtime);
     return;
   }
 
   if (mode === "manual") {
-    while (true) {
-      const config = await collectManualConfig(getModePreset("manual"));
-      if (state.runtime.printPlan) {
-        printInstallPlan(config, state.runtime);
-        return;
-      }
-
-      const action = await reviewManualConfig(config, state.runtime);
-      if (action === "retry") {
-        continue;
-      }
-
-      await runInstallFlow(config, state.runtime, {
-        skipPlanPrint: true,
-        skipConfirmPrompt: true,
-      });
-      await finalizeProject(config.projectPath, state.runtime);
-      return;
-    }
-  }
-
-  if (hasLaravelProject) {
-    const action = await askChoice(
-      "A Laravel project was detected in the current directory",
-      ["Update the current project", "Create a new project (Automatic)", "Create a new project (Manual)"],
-      0,
-    );
-
-    if (action === 0) {
-      if (state.runtime.printPlan) {
-        printUpdatePlan(cwd, readComposerPackages(cwd), state.runtime);
-        return;
-      }
-      await runUpdateFlow(cwd);
-      await finalizeProject(cwd, state.runtime);
-      return;
-    }
-
-    if (action === 1) {
-      const config = await collectAutoConfig(getModePreset("auto"));
-      if (state.runtime.printPlan) {
-        printInstallPlan(config, state.runtime);
-        return;
-      }
-      await runInstallFlow(config, state.runtime);
-      await finalizeProject(config.projectPath, state.runtime);
-      return;
-    }
-
-    while (true) {
-      const config = await collectManualConfig(getModePreset("manual"));
-      if (state.runtime.printPlan) {
-        printInstallPlan(config, state.runtime);
-        return;
-      }
-
-      const reviewAction = await reviewManualConfig(config, state.runtime);
-      if (reviewAction === "retry") {
-        continue;
-      }
-
-      await runInstallFlow(config, state.runtime, {
-        skipPlanPrint: true,
-        skipConfirmPrompt: true,
-      });
-      await finalizeProject(config.projectPath, state.runtime);
-      return;
-    }
-  }
-
-  const modeChoice = await askChoice(
-    "What do you want to do?",
-    ["Automatic setup", "Guided manual setup"],
-    0,
-  );
-  if (modeChoice === 0) {
-    const config = await collectAutoConfig(getModePreset("auto"));
-    if (state.runtime.printPlan) {
-      printInstallPlan(config, state.runtime);
-      return;
-    }
-    await runInstallFlow(config, state.runtime);
-    await finalizeProject(config.projectPath, state.runtime);
+    await runManualMode(state.runtime);
     return;
   }
 
-  while (true) {
-    const config = await collectManualConfig(getModePreset("manual"));
-    if (state.runtime.printPlan) {
-      printInstallPlan(config, state.runtime);
-      return;
-    }
-
-    const action = await reviewManualConfig(config, state.runtime);
-    if (action === "retry") {
-      continue;
-    }
-
-    await runInstallFlow(config, state.runtime, {
-      skipPlanPrint: true,
-      skipConfirmPrompt: true,
-    });
-    await finalizeProject(config.projectPath, state.runtime);
-    return;
-  }
+  await runInteractiveDefaultFlow(cwd, state.runtime);
 }
 
 // Global top-level error handler for the Node phase.

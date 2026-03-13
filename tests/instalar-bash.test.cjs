@@ -147,6 +147,35 @@ check_and_prepare_dependencies
   assert.match(result.stdout, /FAIL:Plan preview requires node to be installed\./);
 });
 
+test("check_and_prepare_dependencies aborts when an installed dependency is below the minimum version", () => {
+  const result = runBashHarness(`
+section() { :; }
+info() { printf 'INFO:%s\\n' "$1"; }
+warn() { printf 'WARN:%s\\n' "$1"; }
+ok() { printf 'OK:%s\\n' "$1"; }
+fail() { printf 'FAIL:%s\\n' "$1"; }
+detect_package_manager() { PKG_MANAGER="apt"; }
+refresh_dep_state() {
+  DEP_AVAILABLE["php"]=1
+  DEP_VERSION["php"]="PHP 8.4.9"
+  DEP_AVAILABLE["composer"]=1
+  DEP_VERSION["composer"]="Composer version 2.7.9"
+  DEP_AVAILABLE["laravel"]=1
+  DEP_VERSION["laravel"]="Laravel Installer 5.0.0"
+  DEP_AVAILABLE["node"]=1
+  DEP_VERSION["node"]="v20.11.0"
+  DEP_AVAILABLE["npm"]=1
+  DEP_VERSION["npm"]="10.2.0"
+}
+print_dep_table() { :; }
+BASH_PRINT_PLAN=1
+check_and_prepare_dependencies
+`);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /FAIL:Dependency version too old: php 8\.4\.9 found, need >= 8\.5\.0\./);
+});
+
 test("check_and_prepare_dependencies applies detected updates automatically in unattended runs", () => {
   const result = runBashHarness(`
 section() { :; }
@@ -156,10 +185,16 @@ ok() { printf 'OK:%s\\n' "$1"; }
 fail() { printf 'FAIL:%s\\n' "$1"; }
 detect_package_manager() { PKG_MANAGER="apt"; }
 refresh_dep_state() {
-  for dep in "\${DEPS[@]}"; do
-    DEP_AVAILABLE["$dep"]=1
-    DEP_VERSION["$dep"]="\${dep}-ok"
-  done
+  DEP_AVAILABLE["php"]=1
+  DEP_VERSION["php"]="PHP 8.5.0"
+  DEP_AVAILABLE["composer"]=1
+  DEP_VERSION["composer"]="Composer version 2.8.1"
+  DEP_AVAILABLE["laravel"]=1
+  DEP_VERSION["laravel"]="Laravel Installer 5.0.0"
+  DEP_AVAILABLE["node"]=1
+  DEP_VERSION["node"]="v20.11.0"
+  DEP_AVAILABLE["npm"]=1
+  DEP_VERSION["npm"]="10.8.0"
 }
 print_dep_table() { printf 'TABLE\\n'; }
 detect_available_updates() {
@@ -192,10 +227,16 @@ detect_package_manager() { PKG_MANAGER="apt"; }
 state_refresh_count=0
 refresh_dep_state() {
   state_refresh_count=$((state_refresh_count + 1))
-  for dep in "\${DEPS[@]}"; do
-    DEP_AVAILABLE["$dep"]=1
-    DEP_VERSION["$dep"]="\${dep}-ok"
-  done
+  DEP_AVAILABLE["php"]=1
+  DEP_VERSION["php"]="PHP 8.5.0"
+  DEP_AVAILABLE["composer"]=1
+  DEP_VERSION["composer"]="Composer version 2.8.1"
+  DEP_AVAILABLE["laravel"]=1
+  DEP_VERSION["laravel"]="Laravel Installer 5.0.0"
+  DEP_AVAILABLE["node"]=1
+  DEP_VERSION["node"]="v20.11.0"
+  DEP_AVAILABLE["npm"]=1
+  DEP_VERSION["npm"]="10.8.0"
 
   if (( state_refresh_count == 1 )); then
     DEP_AVAILABLE["composer"]=0
@@ -228,10 +269,16 @@ ok() { printf 'OK:%s\\n' "$1"; }
 fail() { printf 'FAIL:%s\\n' "$1"; }
 detect_package_manager() { PKG_MANAGER="apt"; }
 refresh_dep_state() {
-  for dep in "\${DEPS[@]}"; do
-    DEP_AVAILABLE["$dep"]=1
-    DEP_VERSION["$dep"]="\${dep}-ok"
-  done
+  DEP_AVAILABLE["php"]=1
+  DEP_VERSION["php"]="PHP 8.5.0"
+  DEP_AVAILABLE["composer"]=1
+  DEP_VERSION["composer"]="Composer version 2.8.1"
+  DEP_AVAILABLE["laravel"]=1
+  DEP_VERSION["laravel"]="Laravel Installer 5.0.0"
+  DEP_AVAILABLE["node"]=1
+  DEP_VERSION["node"]="v20.11.0"
+  DEP_AVAILABLE["npm"]=1
+  DEP_VERSION["npm"]="10.8.0"
 
   DEP_AVAILABLE["laravel"]=0
   DEP_VERSION["laravel"]="not installed"
@@ -255,10 +302,16 @@ ok() { printf 'OK:%s\\n' "$1"; }
 fail() { printf 'FAIL:%s\\n' "$1"; }
 detect_package_manager() { PKG_MANAGER="apt"; }
 refresh_dep_state() {
-  for dep in "\${DEPS[@]}"; do
-    DEP_AVAILABLE["$dep"]=1
-    DEP_VERSION["$dep"]="\${dep}-ok"
-  done
+  DEP_AVAILABLE["php"]=1
+  DEP_VERSION["php"]="PHP 8.5.0"
+  DEP_AVAILABLE["composer"]=1
+  DEP_VERSION["composer"]="Composer version 2.8.1"
+  DEP_AVAILABLE["laravel"]=1
+  DEP_VERSION["laravel"]="Laravel Installer 5.0.0"
+  DEP_AVAILABLE["node"]=1
+  DEP_VERSION["node"]="v20.11.0"
+  DEP_AVAILABLE["npm"]=1
+  DEP_VERSION["npm"]="10.8.0"
 }
 print_dep_table() { :; }
 detect_available_updates() {

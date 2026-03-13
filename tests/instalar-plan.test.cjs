@@ -183,7 +183,8 @@ test("printFinalNotes groups project details, next steps, admin details, and war
     revealPassword: true,
     passwordSource: "generated",
   };
-  harness.state.warnings = ["Storage link missing", "Boost install skipped"];
+  harness.state.warnings = ["Invalid selection."];
+  harness.state.finalWarnings = ["Storage link missing", "Boost install skipped"];
 
   harness.setSection((title) => {
     events.sections.push(title);
@@ -218,4 +219,5 @@ test("printFinalNotes groups project details, next steps, admin details, and war
   assert.ok(events.details.some((message) => /Password:\s+generated-secret$/.test(message)));
   assert.ok(events.details.includes("- Storage link missing"));
   assert.ok(events.details.includes("- Boost install skipped"));
+  assert.equal(events.details.includes("- Invalid selection."), false);
 });

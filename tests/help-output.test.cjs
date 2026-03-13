@@ -33,6 +33,7 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /--print-plan/);
   assert.match(output, /--log-file <path>/);
   assert.match(output, /--preset <name>/);
+  assert.match(output, /--upgrade-dependencies/);
   assert.match(output, /--skip-boost-install/);
   assert.match(output, /--allow-delete-any-existing/);
   assert.match(output, /--continue-on-health-check-failure/);
@@ -44,6 +45,7 @@ test("help output documents the current installer flags and version", () => {
   assert.match(output, /Legacy alias for --dry-run/);
   assert.match(output, /Write installer output to a plain-text log file/);
   assert.match(output, /Package preset: minimal, standard, or full/);
+  assert.match(output, /Use composer update in update mode/);
   assert.match(output, /Skip interactive boost:install step/);
   assert.match(output, /Also allow replacing generic or git-managed directories/);
   assert.match(output, /Continue unattended runs even when final health checks fail/);
