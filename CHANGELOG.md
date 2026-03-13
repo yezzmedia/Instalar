@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.18] - 2026-03-13 (Rosie)
+
+### Added
+
+- A project logo and a direct `curl -fsSL https://yezzmedia.com/instalar.sh | bash` quick-start path in the README
+- A moving activity bar for long-running installer commands when command output stays hidden
+- `--display-command-output` and `--display-info` to reveal live subprocess output on demand
+
+### Changed
+
+- Composer, npm, and Artisan subprocess output now stays hidden by default so auto and manual mode remain readable
+- Manual-mode step cards and top-level sections now use a more polished visual structure with clearer progress feedback
+- Reverb and module-related setup commands now stay visibly interactive when they may ask follow-up questions
+
+### Fixed
+
+- Skip potentially interactive Reverb and module setup commands in non-interactive runs and record clear manual follow-up steps instead of letting the installer hang
+
 ## [0.1.17] - 2026-03-13 (Rosie)
 
 ### Added
